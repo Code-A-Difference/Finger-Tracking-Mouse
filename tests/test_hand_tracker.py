@@ -25,7 +25,8 @@ def test_a_damaged_or_missing_model_is_refused(tmp_path):
 
 
 @pytest.mark.skipif(not (ROOT / "models" / "hand_landmarker.task").exists(), reason="model not downloaded")
-@pytest.mark.skipif(not hand_tracker.metal_available(), reason="no Metal device (Apple-silicon CI runner)")
+@pytest.mark.skipif(not hand_tracker.start_check()[0],
+                       reason="MediaPipe can't open the hand model on this machine (e.g. a macOS CI VM)")
 def test_hand_tracking_starts_without_the_portaudio_library():
     # On Linux, `import sounddevice` raises OSError when PortAudio isn't
     # installed, and MediaPipe imports it on load. Simulate that here.

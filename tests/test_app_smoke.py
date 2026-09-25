@@ -26,8 +26,8 @@ import hand_tracker  # noqa: E402
 
 pytestmark = [
     pytest.mark.skipif(not MODEL.exists(), reason="model not downloaded (tools/fetch_model.py)"),
-    pytest.mark.skipif(not hand_tracker.metal_available(),
-                       reason="no Metal device (MediaPipe on Apple silicon needs one; CI runners lack it)"),
+    pytest.mark.skipif(not hand_tracker.start_check()[0],
+                       reason="MediaPipe can't open the hand model on this machine (e.g. a macOS CI VM)"),
 ]
 
 
