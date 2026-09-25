@@ -158,7 +158,7 @@ without clicking anything.
 ## Building and releasing
 
 See [RELEASING.md](RELEASING.md): installers for every platform, code signing
-(Authenticode via Azure Trusted Signing or a .pfx; Apple Developer ID with
+(Authenticode via Azure Artifact Signing or a .pfx; Apple Developer ID with
 notarization), and the release workflow. What changed in each version is in
 [CHANGES.md](CHANGES.md).
 

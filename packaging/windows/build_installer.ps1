@@ -17,7 +17,7 @@
 
   Certificates issued since June 2023 live on hardware or a cloud HSM and
   can't be exported as .pfx; for those, sign with your provider's tool
-  (Azure Trusted Signing is wired into the workflow) and leave these unset.
+  (Azure Artifact Signing is wired into the workflow) and leave these unset.
 #>
 param(
   [Parameter(Mandatory = $true)][string]$Version,

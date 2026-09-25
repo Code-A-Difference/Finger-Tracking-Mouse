@@ -58,11 +58,11 @@ time.
 
 The workflow supports two ways. Use whichever matches your certificate.
 
-**A. Azure Trusted Signing** (Microsoft's signing service; certificates are
-held in Microsoft's HSM, which is how new certificates have to be stored
-since June 2023). Create a Trusted Signing account and certificate profile,
-and an Entra app registration with the *Trusted Signing Certificate Profile
-Signer* role on it. Add secrets:
+**A. Azure Artifact Signing** (Microsoft's signing service, formerly
+"Trusted Signing"; certificates are held in Microsoft's HSM, which is how
+new certificates have to be stored since June 2023). Create an Artifact
+Signing account and certificate profile, and an Entra app registration with
+the *Certificate Profile Signer* role on it. Add secrets:
 
 | Secret | Value |
 |---|---|
@@ -70,7 +70,7 @@ Signer* role on it. Add secrets:
 | `AZURE_CLIENT_ID` | app registration's client ID |
 | `AZURE_CLIENT_SECRET` | its client secret |
 | `AZURE_SIGNING_ENDPOINT` | the account's region endpoint, e.g. `https://eus.codesigning.azure.net/` |
-| `AZURE_SIGNING_ACCOUNT` | Trusted Signing account name |
+| `AZURE_SIGNING_ACCOUNT` | Artifact Signing account name |
 | `AZURE_SIGNING_PROFILE` | certificate profile name |
 
 The workflow signs `FingerMouse.exe` before packaging and the installer
