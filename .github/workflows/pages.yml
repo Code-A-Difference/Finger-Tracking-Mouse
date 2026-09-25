@@ -29,8 +29,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
       - name: Prepare site
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,8 +43,8 @@ jobs:
             --jq '{tag_name, published_at, html_url, assets: [.assets[] | {name, size, browser_download_url}]}' \
             > _site/release.json || echo '{}' > _site/release.json
           cat _site/release.json
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
