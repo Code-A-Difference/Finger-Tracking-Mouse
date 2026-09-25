@@ -22,8 +22,6 @@ jobs:
             runner: macos-15
           - platform: macos-x64
             runner: macos-15-intel
-          - platform: linux-x64
-            runner: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,17 +35,26 @@ jobs:
       - name: Archive Windows app
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path dist/FingerMouse -DestinationPath dist/FingerMouse-windows-x64.zip
+        run: iscc /DMyAppVersion=${{ github.ref_name }} installer/FingerMouse.iss
+      - name: Sign Windows installer
+        if: runner.os == 'Windows' && env.WINDOWS_CERT_BASE64 != ''
+        shell: pwsh
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes('signing.pfx', [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          signtool sign /fd SHA256 /f signing.pfx /p $env:WINDOWS_CERT_PASSWORD dist/FingerMouse-windows-x64-setup.exe
+          Remove-Item -LiteralPath signing.pfx
       - name: Archive macOS app
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent "dist/Finger Mouse.app" "dist/FingerMouse-${{ matrix.platform }}.zip"
-      - name: Archive Linux app
-        if: runner.os == 'Linux'
-        run: zip -qr dist/FingerMouse-linux-x64.zip dist/FingerMouse
+        run: hdiutil create -volname "Finger Mouse" -srcfolder "dist/Finger Mouse.app" -ov -format UDZO "dist/FingerMouse-${{ matrix.platform }}.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: FingerMouse-${{ matrix.platform }}
-          path: dist/FingerMouse-*.zip
+          path: |
+            dist/FingerMouse-*.exe
+            dist/FingerMouse-*.dmg
           if-no-files-found: error
 
   publish-release:
@@ -64,5 +71,7 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: release-files/*.zip
+          files: |
+            release-files/*.exe
+            release-files/*.dmg
           generate_release_notes: true
