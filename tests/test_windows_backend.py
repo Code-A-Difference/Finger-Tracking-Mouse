@@ -8,20 +8,22 @@ scrolled. The hook is proven live with a harmless move before any button is
 sent; if it isn't, the test stops rather than click for real.
 """
 
-import ctypes
 import os
 import sys
-import threading
-import time
-from ctypes import wintypes
 
 import pytest
 
-pytestmark = [
-    pytest.mark.skipif(sys.platform != "win32", reason="Windows input API"),
-    # CI runners have no interactive desktop to inject input into.
-    pytest.mark.skipif(bool(os.environ.get("CI")), reason="needs an interactive Windows desktop"),
-]
+# Windows only, and skipped before importing ctypes.wintypes, which fails to
+# import anywhere else. CI runners have no interactive desktop to inject into.
+if sys.platform != "win32":
+    pytest.skip("Windows input API", allow_module_level=True)
+if os.environ.get("CI"):
+    pytest.skip("needs an interactive Windows desktop", allow_module_level=True)
+
+import ctypes  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from ctypes import wintypes  # noqa: E402
 
 WH_MOUSE_LL = 14
 WM_QUIT = 0x0012

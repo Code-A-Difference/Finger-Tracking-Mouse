@@ -36,9 +36,9 @@ jobs:
       HAS_MACOS_CERT: ${{ secrets.MACOS_CERT_P12_BASE64 != '' }}
       HAS_MACOS_NOTARY: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -73,7 +73,14 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a python -m pytest -q; else python -m pytest -q; fi
+          set +e
+          run=""; [ "$RUNNER_OS" = "Linux" ] && run="xvfb-run -a"
+          $run python -m pytest -q -rfE --tb=short > pytest.log 2>&1
+          status=$?
+          cat pytest.log
+          # Failures become annotations: readable on the run page and the public API.
+          [ $status -ne 0 ] && python tools/ci_annotate.py pytest.log
+          exit $status
 
       # ---- macOS signing keychain (only with secrets, only for tags) ----------
       - name: Import macOS signing certificate
@@ -116,15 +123,15 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install innosetup --no-progress -y
 
-      - name: Sign FingerMouse.exe (Azure Trusted Signing)
+      - name: Sign FingerMouse.exe (Azure Artifact Signing)
         if: runner.os == 'Windows' && env.RELEASE == 'true' && env.HAS_AZURE_SIGNING == 'true'
-        uses: azure/trusted-signing-action@v0.5.1
+        uses: azure/artifact-signing-action@v2
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
           endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
           files-folder: dist/FingerMouse
           files-folder-filter: exe
@@ -141,15 +148,15 @@ jobs:
           WINDOWS_CERT_PASSWORD: ${{ env.RELEASE == 'true' && secrets.WINDOWS_CERT_PASSWORD || '' }}
         run: packaging/windows/build_installer.ps1 -Version ${{ steps.version.outputs.version }}
 
-      - name: Sign installer (Azure Trusted Signing)
+      - name: Sign installer (Azure Artifact Signing)
         if: runner.os == 'Windows' && env.RELEASE == 'true' && env.HAS_AZURE_SIGNING == 'true'
-        uses: azure/trusted-signing-action@v0.5.1
+        uses: azure/artifact-signing-action@v2
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
           endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
           files: ${{ github.workspace }}\dist\FingerMouse-windows-x64-setup.exe
           file-digest: SHA256
@@ -194,7 +201,7 @@ jobs:
             Linux)   echo "AppImages are not code-signed; the release lists SHA-256 checksums." ;;
           esac
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: dist/${{ matrix.asset }}
@@ -209,15 +216,15 @@ jobs:
       contents: write
       actions: write          # to refresh the download page afterwards
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: release-files
           merge-multiple: true
       - name: Checksums
         working-directory: release-files
         run: sha256sum FingerMouse-* > SHA256SUMS.txt && cat SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           name: Finger Mouse ${{ github.ref_name }}
           body_path: packaging/release-notes.md
