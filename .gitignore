@@ -4,3 +4,7 @@ dist/
 .venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+# Downloaded by tools/fetch_model.py (pinned by SHA-256), never committed
+models/*.task
+models/*.part
