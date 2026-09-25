@@ -1110,16 +1110,17 @@ def self_test(out_path: Optional[str]) -> int:
         nonlocal ok
         try:
             results["checks"][name] = {"ok": True, "detail": fn()}
-        except Exception as exc:  # noqa: BLE001 - report every failure
+        except (Exception, SystemExit) as exc:  # noqa: BLE001 - report every failure, even a library's sys.exit()
             ok = False
             results["checks"][name] = {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
 
     def hand_model() -> str:
-        from hand_tracker import HandTracker, check_bundle, metal_available
-        if not metal_available():
-            # Starting the model would abort here (no Metal device, e.g. a CI
-            # virtual machine); check everything short of that instead.
-            return "not started: no Metal device on this machine; " + check_bundle()
+        from hand_tracker import HandTracker, check_bundle, start_check
+        ok, why = start_check()
+        if not ok:
+            # Opening the model would abort on this machine (a Mac virtual
+            # machine, for instance); check everything short of that instead.
+            return f"not opened here ({why}); " + check_bundle()
         tracker = HandTracker()
         started = time.perf_counter()
         tracker.process(np.zeros((360, 640, 3), np.uint8))
@@ -1153,6 +1154,9 @@ def self_test(out_path: Optional[str]) -> int:
 
 def main() -> int:
     args = sys.argv[1:]
+    if args and args[0] == "--probe-hand-model":      # the child process of hand_tracker.start_check()
+        from hand_tracker import probe_main
+        return probe_main()
     if args and args[0] == "--self-test":
         return self_test(args[1] if len(args) > 1 else None)
 

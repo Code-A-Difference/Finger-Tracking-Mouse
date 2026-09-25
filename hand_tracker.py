@@ -13,10 +13,9 @@ and installed apps live in exactly those paths.
 
 from __future__ import annotations
 
-import ctypes
 import hashlib
 import logging
-import platform
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -58,42 +57,82 @@ def _allow_missing_audio() -> None:
 _allow_missing_audio()
 
 
-_metal: Optional[bool] = None
+# ---------------------------------------------------------------------------
+# Starting safely
+# ---------------------------------------------------------------------------
+# MediaPipe's macOS build sets up GPU resources while opening the hand model,
+# even for CPU inference, and if that fails it doesn't raise — it aborts the
+# whole process. Real Macs are fine; some virtual machines (GitHub's macOS
+# runners, for one) are not. So on macOS the model is first opened once in a
+# short-lived child process: if that child dies, the app shows why and keeps
+# running instead of vanishing.
+
+PROBE_ARG = "--probe-hand-model"
+_probe: Optional[tuple[bool, str]] = None
 
 
-def metal_available() -> bool:
-    """Whether MediaPipe can start on this machine's graphics setup.
+def needs_probe() -> bool:
+    return sys.platform == "darwin"
 
-    MediaPipe 1.0's Apple-silicon build sets up Metal (Apple's GPU API) while
-    starting the hand model, even though inference runs on the CPU, and if
-    there's no Metal device it aborts the whole process. Every real Mac has
-    one; virtual machines (such as CI runners) may not. Asking Metal first is
-    harmless, so the app can say what's wrong instead of vanishing.
+
+def _probe_command() -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, PROBE_ARG]            # the app itself (see Finger_tracker.main)
+    return [sys.executable, str(Path(__file__).resolve()), PROBE_ARG]
+
+
+def probe_main() -> int:
+    """Run in the child: open the model, run one frame, report."""
+    tracker = HandTracker(probe=False)
+    tracker.process(np.zeros((240, 320, 3), np.uint8))
+    tracker.close()
+    print("hand model ok")
+    return 0
+
+
+def start_check(timeout: float = 90.0) -> tuple[bool, str]:
+    """(True, "") if MediaPipe can open the hand model here, else (False, why).
+
+    Cached for the life of the process. Only macOS actually probes.
     """
-    global _metal
-    if _metal is None:
-        if sys.platform != "darwin" or platform.machine() != "arm64":
-            _metal = True
+    global _probe
+    if _probe is None:
+        if not needs_probe():
+            _probe = (True, "")
         else:
             try:
-                lib = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/Metal.framework/Metal")
-                lib.MTLCreateSystemDefaultDevice.restype = ctypes.c_void_p
-                _metal = bool(lib.MTLCreateSystemDefaultDevice())
-            except (OSError, AttributeError):
-                _metal = False
-    return _metal
+                done = subprocess.run(_probe_command(), capture_output=True, text=True, timeout=timeout,
+                                      errors="replace")
+                if done.returncode == 0:
+                    _probe = (True, "")
+                else:
+                    detail = [l for l in (done.stderr or "").splitlines() if "Check failed" in l or "Error" in l]
+                    why = detail[-1].strip() if detail else f"exit code {done.returncode}"
+                    vm = " This Mac appears to be a virtual machine." if _is_virtual_machine() else ""
+                    _probe = (False, f"MediaPipe couldn't open the hand model on this Mac ({why}).{vm}")
+                    log.error("Hand model probe failed: %s\n%s", why, (done.stderr or "")[-4000:])
+            except (OSError, subprocess.SubprocessError) as exc:
+                _probe = (False, f"Couldn't check the hand model: {exc}")
+    return _probe
 
 
-NO_METAL = ("Hand tracking needs a Metal graphics device, and this Mac doesn't report one "
-            "(is it a virtual machine?).")
+def _is_virtual_machine() -> bool:
+    try:
+        out = subprocess.run(["sysctl", "-n", "kern.hv_vmm_present"], capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() == "1"
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def check_bundle() -> str:
-    """Verify the model and MediaPipe's native library without starting a graph."""
+    """Verify the model and MediaPipe's native library without opening the model."""
     model = load_model_bytes()
-    from mediapipe.tasks.python.core import mediapipe_c_bindings
+    try:
+        from mediapipe.tasks.python.core import mediapipe_c_bindings   # MediaPipe 1.x
 
-    mediapipe_c_bindings.load_raw_library()
+        mediapipe_c_bindings.load_raw_library()
+    except ImportError:
+        from mediapipe.tasks.python import vision  # noqa: F401  (0.10.x: bindings load on import)
     return f"model {len(model):,} bytes (SHA-256 ok), native library loads"
 
 
@@ -124,14 +163,16 @@ def load_model_bytes(path: Optional[Path] = None) -> bytes:
 class HandTracker:
     """Finds one hand per frame. ``process`` returns its 21 landmarks or None."""
 
-    def __init__(self, min_confidence: float = 0.6, model: Optional[bytes] = None) -> None:
+    def __init__(self, min_confidence: float = 0.6, model: Optional[bytes] = None, probe: bool = True) -> None:
         self.min_confidence = min_confidence
         self.kind = ""
         self._last_ts = 0
         self._impl: Any = None
         self._legacy: Any = None
-        if not metal_available():
-            raise RuntimeError(NO_METAL)
+        if probe:
+            ok, why = start_check()
+            if not ok:
+                raise RuntimeError(why)
         try:
             self._open_tasks(model if model is not None else load_model_bytes())
         except Exception as exc:
@@ -202,3 +243,7 @@ def draw_landmarks(image: np.ndarray, landmarks: Sequence[Any], color=(90, 220, 
         cv2.line(image, pts[a], pts[b], (200, 200, 200), 1, cv2.LINE_AA)
     for p in pts:
         cv2.circle(image, p, 3, color, -1, cv2.LINE_AA)
+
+
+if __name__ == "__main__" and PROBE_ARG in sys.argv:
+    raise SystemExit(probe_main())

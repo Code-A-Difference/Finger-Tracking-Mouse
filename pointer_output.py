@@ -269,6 +269,15 @@ class PyAutoGUIBackend(PointerBackend):
     name = "pyautogui"
 
     def __init__(self) -> None:
+        # PyAutoGUI imports MouseInfo, which on Linux calls sys.exit() if
+        # tkinter is missing — and the app bundle has no tkinter. Finger Mouse
+        # never uses MouseInfo, so a stand-in keeps that import harmless.
+        if "mouseinfo" not in sys.modules:
+            import types
+
+            stub = types.ModuleType("mouseinfo")
+            stub.mouseInfo = lambda *args, **kwargs: None  # type: ignore[attr-defined]
+            sys.modules["mouseinfo"] = stub
         import pyautogui
 
         pyautogui.FAILSAFE = False   # our own safety: physical-mouse override + Esc/Stop
