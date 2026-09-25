@@ -237,10 +237,19 @@ def _v4l2_cameras() -> list[CameraInfo]:
 
 
 def _avfoundation_names() -> list[str]:
-    """macOS: OpenCV's AVFoundation backend numbers cameras sorted by uniqueID."""
+    """macOS: OpenCV's AVFoundation backend numbers cameras sorted by uniqueID.
+
+    Only once camera access has been granted: touching capture devices
+    before that can make macOS's privacy system stop a process that has no
+    camera usage description (a plain `python`, as in development and CI).
+    Asking for the authorization status never does. Until access is granted
+    the list shows generic names, and the first Start tracking asks.
+    """
     try:
         from AVFoundation import AVCaptureDevice, AVMediaTypeVideo  # pyobjc-framework-AVFoundation
     except ImportError:
+        return []
+    if AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeVideo) != 3:   # 3 = authorized
         return []
     devices = list(AVCaptureDevice.devicesWithMediaType_(AVMediaTypeVideo) or [])
     devices.sort(key=lambda d: str(d.uniqueID()))

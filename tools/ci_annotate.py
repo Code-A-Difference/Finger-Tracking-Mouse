@@ -32,8 +32,14 @@ def main(path: str) -> None:
         body = (message or "") + ("\n" + "\n".join(details) if details else "")
         print(f"::error title={kind} {escape(test)}::{escape(body[:3000])}")
     if not found:
-        tail = "\n".join(log.strip().splitlines()[-40:])
-        print(f"::error title=pytest::{escape(tail[:3000])}")
+        lines = log.strip().splitlines()
+        # A crash: show where it started (which thread, which test), not just the end.
+        start = next((i for i, l in enumerate(lines) if "Fatal Python error" in l), None)
+        excerpt = lines[start:start + 45] if start is not None else lines[-40:]
+        print(f"::error title=pytest crashed::{escape(chr(10).join(excerpt)[:4000])}")
+        before = lines[max(0, (start or 0) - 12):start or 0]
+        if before:
+            print(f"::error title=pytest output before the crash::{escape(chr(10).join(before)[:2000])}")
 
 
 if __name__ == "__main__":
