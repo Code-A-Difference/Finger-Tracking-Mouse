@@ -68,6 +68,9 @@ MODEL = Path(__file__).resolve().parent.parent / "models" / "hand_landmarker.tas
 def landmarker():
     if not MODEL.exists():
         pytest.skip("model not downloaded (python tools/fetch_model.py)")
+    import hand_tracker
+    if not hand_tracker.metal_available():
+        pytest.skip("no Metal device (MediaPipe on Apple silicon needs one; CI runners lack it)")
     cv2 = pytest.importorskip("cv2")
     mp = pytest.importorskip("mediapipe")
     from mediapipe.tasks.python import BaseOptions, vision

@@ -1115,7 +1115,11 @@ def self_test(out_path: Optional[str]) -> int:
             results["checks"][name] = {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
 
     def hand_model() -> str:
-        from hand_tracker import HandTracker
+        from hand_tracker import HandTracker, check_bundle, metal_available
+        if not metal_available():
+            # Starting the model would abort here (no Metal device, e.g. a CI
+            # virtual machine); check everything short of that instead.
+            return "not started: no Metal device on this machine; " + check_bundle()
         tracker = HandTracker()
         started = time.perf_counter()
         tracker.process(np.zeros((360, 640, 3), np.uint8))
