@@ -1145,10 +1145,15 @@ def self_test(out_path: Optional[str]) -> int:
     check("settings", lambda: str(app_settings.settings_path()))
     results["ok"] = ok
     text = json.dumps(results, indent=2)
-    if out_path:
-        Path(out_path).write_text(text, encoding="utf-8")
-    elif sys.stdout:
-        print(text)
+    try:
+        if out_path:
+            Path(out_path).write_text(text, encoding="utf-8")
+        elif sys.stdout:
+            print(text)
+    except OSError:
+        # Never let an error reach the windowed app's crash dialog: in an
+        # unattended check, a dialog nobody can see is a hang.
+        return 2
     return 0 if ok else 1
 
 
