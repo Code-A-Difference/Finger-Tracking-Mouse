@@ -76,7 +76,7 @@ class TrackingEngine(threading.Thread):
         self.view = View()
         self.preview_width = 640
 
-        self._stop = threading.Event()
+        self._halt = threading.Event()
         self._pending_settings: Optional[Settings] = None
         self._settings_lock = threading.Lock()
         self.grabber: Optional[FrameGrabber] = None
@@ -112,7 +112,7 @@ class TrackingEngine(threading.Thread):
 
     # -- control, from any thread -------------------------------------------
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
 
     def update_settings(self, settings: Settings) -> None:
         with self._settings_lock:
@@ -146,7 +146,7 @@ class TrackingEngine(threading.Thread):
             return
         last_seq = 0
         errors_in_row = 0
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             self._apply_pending_settings()
             frame = self.grabber.wait_frame(last_seq, 0.2) if self.grabber else None
             now = self.clock()
@@ -227,7 +227,7 @@ class TrackingEngine(threading.Thread):
         """No new frame within the wait: treat as no hand, and watch for a dead camera."""
         self._hand_absent(now)
         g = self.grabber
-        if g is None or self._stop.is_set():
+        if g is None or self._halt.is_set():
             return
         age = g.latest_age()
         if g.connected and age is not None and age > CAMERA_STALL_AFTER:

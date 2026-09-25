@@ -346,7 +346,7 @@ class PointerOutput(threading.Thread):
         self.pause_on_physical_mouse = pause_on_physical_mouse
         self._queue: collections.deque[_Command] = collections.deque()
         self._cond = threading.Condition()
-        self._stop = False
+        self._halt = False
         self._button_down = False
         self._last_set: Optional[tuple[int, int]] = None
         self._paused_until = 0.0
@@ -395,7 +395,7 @@ class PointerOutput(threading.Thread):
     def stop(self, timeout: float = 2.0) -> None:
         self.release_all()
         with self._cond:
-            self._stop = True
+            self._halt = True
             self._cond.notify()
         if self.is_alive():
             self.join(timeout)
@@ -413,9 +413,9 @@ class PointerOutput(threading.Thread):
     def run(self) -> None:
         while True:
             with self._cond:
-                while not self._queue and not self._stop:
+                while not self._queue and not self._halt:
                     self._cond.wait(0.5)
-                if self._stop and not self._queue:
+                if self._halt and not self._queue:
                     break
                 command = self._queue.popleft()
             self.busy_since = time.monotonic()

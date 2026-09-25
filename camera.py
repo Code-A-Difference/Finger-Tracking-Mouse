@@ -507,7 +507,7 @@ class FrameGrabber(threading.Thread):
         self.on_status = on_status
         self._cond = threading.Condition()
         self._frame: Optional[Frame] = None
-        self._stop = threading.Event()
+        self._halt = threading.Event()
         self._commands: list[tuple[str, Any]] = []
         self.capabilities: Optional[CameraCapabilities] = None
         self.frames = 0
@@ -518,13 +518,13 @@ class FrameGrabber(threading.Thread):
 
     # -- called from other threads ------------------------------------------
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
         with self._cond:
             self._cond.notify_all()
 
     @property
     def stopped(self) -> bool:
-        return self._stop.is_set()
+        return self._halt.is_set()
 
     def request(self, command: str, value: Any = None) -> None:
         """Run a camera command (zoom, driver settings) between reads."""
@@ -535,7 +535,7 @@ class FrameGrabber(threading.Thread):
         """The newest frame newer than ``after_seq``, waiting up to ``timeout``."""
         end = time.monotonic() + timeout
         with self._cond:
-            while (self._frame is None or self._frame.seq <= after_seq) and not self._stop.is_set():
+            while (self._frame is None or self._frame.seq <= after_seq) and not self._halt.is_set():
                 remaining = end - time.monotonic()
                 if remaining <= 0:
                     return None
@@ -553,14 +553,14 @@ class FrameGrabber(threading.Thread):
     # -- the thread ---------------------------------------------------------
     def run(self) -> None:
         backoff = 0.5
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             self.on_status("opening", None)
             try:
                 self.capabilities = self.source.open()
             except Exception as exc:
                 log.warning("Camera open failed: %s", exc)
                 self.on_status("error", str(exc))
-                if self._stop.wait(backoff):
+                if self._halt.wait(backoff):
                     break
                 backoff = min(backoff * 2, 5.0)
                 continue
@@ -570,15 +570,15 @@ class FrameGrabber(threading.Thread):
             self._read_loop()
             self.connected = False
             self.source.release()
-            if not self._stop.is_set():
+            if not self._halt.is_set():
                 self.on_status("reconnecting", "The camera stopped sending video. Reconnecting…")
-                self._stop.wait(0.5)
+                self._halt.wait(0.5)
         self.source.release()
 
     def _read_loop(self) -> None:
         failures = 0
         seq = self._frame.seq if self._frame else 0
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             self._run_commands()
             self.read_started = time.monotonic()
             try:
@@ -588,7 +588,7 @@ class FrameGrabber(threading.Thread):
                 image = None
             finally:
                 self.read_started = None
-            if self._stop.is_set():
+            if self._halt.is_set():
                 return
             if image is None:
                 failures += 1
