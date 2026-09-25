@@ -41,6 +41,7 @@ class Script:
         self.current = None
         self.engine = None
         self.before_frame = None   # optional hook(frames_left)
+        self.output = None
 
 
 def make_fakes(script):
@@ -88,6 +89,10 @@ def make_fakes(script):
 
         def wait_frame(self, after_seq, timeout):
             if not script.frames:
+                # Let the pointer thread finish what was decided before
+                # stopping: stopping deliberately drops queued commands.
+                if script.output is not None:
+                    settle(script.output)
                 script.engine.stop()
                 return None
             if script.before_frame:
@@ -118,6 +123,7 @@ def run(frames, settings=None, **kw):
     engine = TrackingEngine(settings or Settings(), output, [], tracker_factory=FakeTracker,
                             grabber_factory=FakeGrabber, clock=clock)
     script.engine = engine
+    script.output = output
     engine.start()
     engine.join(10)
     assert not engine.is_alive(), "engine didn't stop"
@@ -249,6 +255,7 @@ def test_switching_camera_releases_first():
     engine = TrackingEngine(Settings(), output, [], tracker_factory=FakeTracker,
                             grabber_factory=FakeGrabber, clock=clock)
     script.engine = engine
+    script.output = output
 
     def switch_mid_drag(frames_left):
         if frames_left == 5:
