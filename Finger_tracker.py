@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import sys
@@ -30,6 +31,7 @@ try:
     )
     from PySide6.QtWidgets import (
         QApplication,
+        QCheckBox,
         QComboBox,
         QFrame,
         QHBoxLayout,
@@ -48,11 +50,18 @@ except ImportError as exc:
         f"Details: {exc}"
     ) from exc
 
+from gesture_state import GestureAction, PinchGesture
+
 
 APP_NAME = "Finger Mouse"
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.2.0"
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.002
+logging.basicConfig(
+    filename=str(Path.home() / "FingerMouse.log"),
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 
 def settings_file() -> Path:
@@ -73,6 +82,11 @@ def load_settings() -> dict[str, Any]:
         "response": 18,
         "cursor_size": 36,
         "pinch_distance": 30,
+        "pinch_hold_ms": 420,
+        "scroll_enabled": True,
+        "scroll_sensitivity": 35,
+        "show_landmarks": True,
+        "flip_off_enabled": False,
     }
     try:
         with settings_file().open("r", encoding="utf-8") as handle:
@@ -88,6 +102,10 @@ def load_settings() -> dict[str, Any]:
     defaults["response"] = _bounded_int(defaults.get("response"), 5, 50, 18)
     defaults["cursor_size"] = _bounded_int(defaults.get("cursor_size"), 16, 80, 36)
     defaults["pinch_distance"] = _bounded_int(defaults.get("pinch_distance"), 15, 50, 30)
+    defaults["pinch_hold_ms"] = _bounded_int(defaults.get("pinch_hold_ms"), 150, 1500, 420)
+    defaults["scroll_sensitivity"] = _bounded_int(defaults.get("scroll_sensitivity"), 5, 100, 35)
+    for key, fallback in (("scroll_enabled", True), ("show_landmarks", True), ("flip_off_enabled", False)):
+        defaults[key] = bool(defaults.get(key, fallback))
     return defaults
 
 
@@ -170,7 +188,9 @@ class TrackingWorker(QThread):
     status_changed = Signal(str)
     frame_ready = Signal(QImage)
     cursor_changed = Signal(int, int)
-    click_requested = Signal()
+    gesture_action = Signal(str, int, int)
+    scroll_requested = Signal(int)
+    hide_requested = Signal()
     gesture_changed = Signal(str)
 
     def __init__(
@@ -179,6 +199,11 @@ class TrackingWorker(QThread):
         camera_view: str,
         response: int,
         pinch_distance: int,
+        pinch_hold_ms: int,
+        scroll_enabled: bool,
+        scroll_sensitivity: int,
+        show_landmarks: bool,
+        flip_off_enabled: bool,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -186,6 +211,11 @@ class TrackingWorker(QThread):
         self.camera_view = camera_view
         self.response = response
         self.pinch_distance = pinch_distance
+        self.pinch_hold_ms = pinch_hold_ms
+        self.scroll_enabled = scroll_enabled
+        self.scroll_sensitivity = scroll_sensitivity
+        self.show_landmarks = show_landmarks
+        self.flip_off_enabled = flip_off_enabled
         self._stop_requested = threading.Event()
 
     def request_stop(self) -> None:
@@ -255,12 +285,38 @@ class TrackingWorker(QThread):
         )
         return gap / max(hand_scale, 1e-4)
 
+    @staticmethod
+    def _scroll_pose(landmarks: Any) -> bool:
+        """Index raised, remaining fingers folded: deliberately unlike a pinch."""
+        return (
+            landmarks[8].y < landmarks[6].y < landmarks[5].y
+            and landmarks[12].y > landmarks[10].y
+            and landmarks[16].y > landmarks[14].y
+            and landmarks[20].y > landmarks[18].y
+        )
+
+    @staticmethod
+    def _flip_off_pose(landmarks: Any) -> bool:
+        """Conservative middle-only pose; enabled only after an explicit warning."""
+        return (
+            landmarks[12].y < landmarks[10].y < landmarks[9].y
+            and landmarks[8].y > landmarks[6].y
+            and landmarks[16].y > landmarks[14].y
+            and landmarks[20].y > landmarks[18].y
+        )
+
     def run(self) -> None:
         camera = None
         hand_tracker = None
-        click_detector = PinchClickDetector(self.pinch_distance)
+        click_detector = PinchGesture(
+            self.pinch_distance / 100.0, self.pinch_hold_ms / 1000.0
+        )
         smoothed: Optional[tuple[float, float]] = None
         failed_frames = 0
+        missing_hand_frames = 0
+        scroll_anchor: Optional[float] = None
+        last_scroll_time = 0.0
+        flip_frames = 0
         try:
             camera, first_frame, camera_index = self._open_camera()
             if self._stop_requested.is_set():
@@ -307,15 +363,22 @@ class TrackingWorker(QThread):
                         interpolation=cv2.INTER_AREA,
                     )
                 rgb = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2RGB)
-                result = hand_tracker.process(rgb)
+                try:
+                    result = hand_tracker.process(rgb)
+                except Exception as exc:
+                    logging.exception("Hand inference failed")
+                    self.status_changed.emit(f"Hand tracking recovered from an error: {exc}")
+                    continue
                 click_registered = False
 
                 if result.multi_hand_landmarks:
                     hand = result.multi_hand_landmarks[0]
                     landmarks = hand.landmark
-                    mp.solutions.drawing_utils.draw_landmarks(
-                        frame, hand, mp.solutions.hands.HAND_CONNECTIONS
-                    )
+                    missing_hand_frames = 0
+                    if self.show_landmarks:
+                        mp.solutions.drawing_utils.draw_landmarks(
+                            frame, hand, mp.solutions.hands.HAND_CONNECTIONS
+                        )
 
                     index_tip = landmarks[8]
                     thumb_tip = landmarks[4]
@@ -332,13 +395,6 @@ class TrackingWorker(QThread):
                     pinch_ratio = self._pinch_ratio(
                         thumb_tip, index_tip, hand_scale, aspect_ratio
                     )
-                    click_state = click_detector.update(pinch_ratio)
-                    if click_state == "clicked":
-                        self.click_requested.emit()
-                        click_registered = True
-                    if click_state is not None:
-                        self.gesture_changed.emit(click_state)
-
                     target_x, target_y = self._to_screen(index_tip.x, index_tip.y)
                     if smoothed is None:
                         smoothed = (float(target_x), float(target_y))
@@ -350,7 +406,40 @@ class TrackingWorker(QThread):
                     screen_size = pyautogui.size()
                     cursor_x = int(np.clip(smoothed[0], 2, screen_size.width - 3))
                     cursor_y = int(np.clip(smoothed[1], 2, screen_size.height - 3))
-                    self.cursor_changed.emit(cursor_x, cursor_y)
+                    actions = click_detector.update(
+                        pinch_ratio, (cursor_x, cursor_y), time.monotonic()
+                    )
+                    for action in actions:
+                        self.gesture_action.emit(action.name, action.x or 0, action.y or 0)
+                        self.gesture_changed.emit(action.name)
+                        click_registered = click_registered or action.name == "click"
+
+                    # Freeze movement during the short-pinch decision window.  Once
+                    # dragging starts, movement resumes normally for drag-and-drop.
+                    if click_detector.state != "pending":
+                        self.cursor_changed.emit(cursor_x, cursor_y)
+
+                    scrolling = self.scroll_enabled and click_detector.state == "open" and self._scroll_pose(landmarks)
+                    if self.flip_off_enabled and click_detector.state == "open" and self._flip_off_pose(landmarks):
+                        flip_frames += 1
+                        if flip_frames >= 12:
+                            self.hide_requested.emit()
+                            self.request_stop()
+                    else:
+                        flip_frames = 0
+                    if scrolling:
+                        if scroll_anchor is None:
+                            scroll_anchor = index_tip.y
+                        delta = scroll_anchor - index_tip.y
+                        now_scroll = time.monotonic()
+                        if abs(delta) >= 0.025 and now_scroll - last_scroll_time >= 0.06:
+                            amount = int(np.clip(delta * self.scroll_sensitivity * 10, -12, 12))
+                            if amount:
+                                self.scroll_requested.emit(amount)
+                                last_scroll_time = now_scroll
+                                scroll_anchor = index_tip.y
+                    else:
+                        scroll_anchor = None
 
                     tip_a = (int(thumb_tip.x * width), int(thumb_tip.y * height))
                     tip_b = (int(index_tip.x * width), int(index_tip.y * height))
@@ -360,6 +449,8 @@ class TrackingWorker(QThread):
                     cv2.circle(frame, tip_b, 10, color, 2, cv2.LINE_AA)
                     gesture_text = (
                         "CLICK REGISTERED" if click_registered
+                        else "DRAGGING" if click_detector.state == "dragging"
+                        else "SCROLL MODE" if scrolling
                         else "PINCH THUMB + INDEX" if click_detector.armed
                         else "OPEN TO ARM CLICK"
                     )
@@ -375,9 +466,14 @@ class TrackingWorker(QThread):
                     )
                 else:
                     smoothed = None
-                    click_state = click_detector.update(None)
-                    if click_state is not None:
-                        self.gesture_changed.emit(click_state)
+                    missing_hand_frames += 1
+                    # A few missed frames are normal.  Past this budget release any
+                    # drag so a camera fault can never leave the button held down.
+                    if missing_hand_frames >= 6:
+                        for action in click_detector.cancel(lost=True):
+                            self.gesture_action.emit(action.name, action.x or 0, action.y or 0)
+                            self.gesture_changed.emit(action.name)
+                        scroll_anchor = None
                     cv2.putText(
                         frame,
                         "Show one hand to the camera",
@@ -407,6 +503,8 @@ class TrackingWorker(QThread):
         except Exception as exc:
             self.status_changed.emit(f"Tracking error: {exc}")
         finally:
+            for action in click_detector.cancel():
+                self.gesture_action.emit(action.name, action.x or 0, action.y or 0)
             if camera is not None:
                 camera.release()
             if hand_tracker is not None:
@@ -477,6 +575,11 @@ class MainWindow(QMainWindow):
         self.cursor_size.setValue(self.settings["cursor_size"])
         self.response.setValue(self.settings["response"])
         self.pinch_distance.setValue(self.settings["pinch_distance"])
+        self.pinch_hold.setValue(self.settings["pinch_hold_ms"])
+        self.scroll_enabled.setChecked(self.settings["scroll_enabled"])
+        self.scroll_sensitivity.setValue(self.settings["scroll_sensitivity"])
+        self.show_landmarks.setChecked(self.settings["show_landmarks"])
+        self.flip_off_enabled.setChecked(self.settings["flip_off_enabled"])
         self._select_camera(self.settings["camera"])
         self._select_camera_view(self.settings["camera_view"])
         self.overlay.set_diameter(self.settings["cursor_size"])
@@ -522,6 +625,10 @@ class MainWindow(QMainWindow):
         camera_row.addStretch(1)
         camera_row.addWidget(self.camera_view)
         layout.addLayout(camera_row)
+        phone_note = QLabel("Phone camera input: planned — connect through a future secure local-camera provider.")
+        phone_note.setObjectName("footnote")
+        phone_note.setWordWrap(True)
+        layout.addWidget(phone_note)
 
         settings_card = QFrame()
         settings_card.setObjectName("settingsCard")
@@ -570,6 +677,34 @@ class MainWindow(QMainWindow):
         self.pinch_distance.valueChanged.connect(self._pinch_distance_changed)
         settings_layout.addLayout(pinch_row)
         settings_layout.addWidget(self.pinch_distance)
+
+        hold_row = QHBoxLayout()
+        hold_row.addWidget(QLabel("Pinch hold for drag"))
+        hold_row.addStretch(1)
+        self.pinch_hold_value = QLabel(); self.pinch_hold_value.setObjectName("value")
+        hold_row.addWidget(self.pinch_hold_value)
+        self.pinch_hold = QSlider(Qt.Orientation.Horizontal)
+        self.pinch_hold.setRange(150, 1500)
+        self.pinch_hold.valueChanged.connect(self._settings_changed)
+        settings_layout.addLayout(hold_row)
+        settings_layout.addWidget(self.pinch_hold)
+
+        scroll_row = QHBoxLayout()
+        self.scroll_enabled = QCheckBox("Enable index-finger scrolling")
+        self.scroll_enabled.toggled.connect(self._settings_changed)
+        self.scroll_value = QLabel(); self.scroll_value.setObjectName("value")
+        self.scroll_sensitivity = QSlider(Qt.Orientation.Horizontal)
+        self.scroll_sensitivity.setRange(5, 100)
+        self.scroll_sensitivity.valueChanged.connect(self._settings_changed)
+        scroll_row.addWidget(self.scroll_enabled); scroll_row.addStretch(1); scroll_row.addWidget(self.scroll_value)
+        settings_layout.addLayout(scroll_row)
+        settings_layout.addWidget(self.scroll_sensitivity)
+        self.show_landmarks = QCheckBox("Show hand landmarks (debug)")
+        self.show_landmarks.toggled.connect(self._settings_changed)
+        settings_layout.addWidget(self.show_landmarks)
+        self.flip_off_enabled = QCheckBox("Enable middle-finger hide gesture (advanced)")
+        self.flip_off_enabled.toggled.connect(self._flip_off_toggled)
+        settings_layout.addWidget(self.flip_off_enabled)
         layout.addWidget(settings_card)
 
         action_row = QHBoxLayout()
@@ -638,6 +773,11 @@ class MainWindow(QMainWindow):
                 "response": self.response.value(),
                 "cursor_size": self.cursor_size.value(),
                 "pinch_distance": self.pinch_distance.value(),
+                "pinch_hold_ms": self.pinch_hold.value(),
+                "scroll_enabled": self.scroll_enabled.isChecked(),
+                "scroll_sensitivity": self.scroll_sensitivity.value(),
+                "show_landmarks": self.show_landmarks.isChecked(),
+                "flip_off_enabled": self.flip_off_enabled.isChecked(),
             }
         )
 
@@ -664,6 +804,28 @@ class MainWindow(QMainWindow):
         if self.worker is not None and self.worker.isRunning():
             self.status.setText("Pinch distance changes apply the next time tracking starts.")
 
+    def _settings_changed(self, _value: Any = None) -> None:
+        self.pinch_hold_value.setText(f"{self.pinch_hold.value()} ms")
+        self.scroll_value.setText(f"{self.scroll_sensitivity.value()}%")
+        self._persist_settings()
+        if self.worker is not None and self.worker.isRunning():
+            self.status.setText("Gesture settings apply the next time tracking starts.")
+
+    def _flip_off_toggled(self, enabled: bool) -> None:
+        if enabled:
+            answer = QMessageBox.question(
+                self, "Enable hide gesture?",
+                "A sustained middle-finger pose will stop tracking and hide Finger Mouse. "
+                "It never closes other applications. Enable it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self.flip_off_enabled.blockSignals(True)
+                self.flip_off_enabled.setChecked(False)
+                self.flip_off_enabled.blockSignals(False)
+        self._persist_settings()
+
     def toggle_tracking(self) -> None:
         if self.worker is not None and self.worker.isRunning():
             self.stop_tracking()
@@ -688,13 +850,20 @@ class MainWindow(QMainWindow):
             str(self.camera_view.currentData()),
             self.response.value(),
             self.pinch_distance.value(),
+            self.pinch_hold.value(),
+            self.scroll_enabled.isChecked(),
+            self.scroll_sensitivity.value(),
+            self.show_landmarks.isChecked(),
+            self.flip_off_enabled.isChecked(),
             self,
         )
         self.worker.status_changed.connect(self.status.setText)
         self.worker.frame_ready.connect(self._show_frame)
         self.worker.cursor_changed.connect(self._move_system_pointer)
         self.worker.cursor_changed.connect(self.overlay.set_cursor_position)
-        self.worker.click_requested.connect(self._click_system_pointer)
+        self.worker.gesture_action.connect(self._handle_gesture_action)
+        self.worker.scroll_requested.connect(self._scroll_system_pointer)
+        self.worker.hide_requested.connect(self._hide_from_gesture)
         self.worker.gesture_changed.connect(self._gesture_status)
         self.worker.finished.connect(self._worker_finished)
         self.worker.start()
@@ -757,11 +926,13 @@ class MainWindow(QMainWindow):
         return False
 
     def stop_tracking(self) -> None:
+        self._release_system_pointer()
         if self.worker is not None and self.worker.isRunning():
             self.status.setText("Stopping tracking…")
             self.worker.request_stop()
 
     def _worker_finished(self) -> None:
+        self._release_system_pointer()
         self.overlay.hide()
         self.start_button.setText("Start tracking")
         self.camera.setEnabled(True)
@@ -777,8 +948,14 @@ class MainWindow(QMainWindow):
             return
         if state == "armed":
             self.status.setText("Click armed. Pinch thumb and index for one left-click.")
-        elif state == "clicked":
+        elif state == "click":
             self.status.setText("Pinch click registered. Open fingers to re-arm.")
+        elif state == "pinch_started":
+            self.status.setText("Pinch locked. Release to click, or hold to drag.")
+        elif state == "mouse_down":
+            self.status.setText("Dragging. Release your pinch to drop.")
+        elif state == "mouse_up":
+            self.status.setText("Drop complete. Open fingers to re-arm.")
         elif state == "disarmed":
             self.status.setText("Hand lost. Show an open hand to arm clicking again.")
 
@@ -806,16 +983,40 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._report_system_control_error(f"System pointer error: {exc}")
 
-    def _click_system_pointer(self) -> None:
-        """Send a real OS click at the system pointer's current location."""
+    def _handle_gesture_action(self, action: str, x: int, y: int) -> None:
+        """Apply state-machine actions on the GUI thread, including locked clicks."""
         try:
-            pyautogui.click()
+            if action == "click":
+                QCursor.setPos(x, y)
+                pyautogui.click(x=x, y=y)
+            elif action == "mouse_down":
+                QCursor.setPos(x, y)
+                pyautogui.mouseDown(x=x, y=y)
+            elif action == "mouse_up":
+                pyautogui.mouseUp()
         except pyautogui.FailSafeException:
             self._report_system_control_error(
                 "Safety stop: move the pointer away from the top-left corner, then start again."
             )
         except Exception as exc:
-            self._report_system_control_error(f"System click error: {exc}")
+            self._report_system_control_error(f"System gesture error: {exc}")
+
+    def _release_system_pointer(self) -> None:
+        """Best-effort cleanup for stop, loss, worker failure, and window close."""
+        try:
+            pyautogui.mouseUp()
+        except Exception:
+            logging.exception("Unable to release system mouse button")
+
+    def _hide_from_gesture(self) -> None:
+        self.stop_tracking()
+        self.hide()
+
+    def _scroll_system_pointer(self, amount: int) -> None:
+        try:
+            pyautogui.scroll(amount)
+        except Exception as exc:
+            self._report_system_control_error(f"System scroll error: {exc}")
 
     def _report_system_control_error(self, message: str) -> None:
         self._system_control_error = message

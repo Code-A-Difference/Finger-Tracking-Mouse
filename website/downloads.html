@@ -34,25 +34,25 @@
     <p class="intro">Finger Mouse turns a webcam into a hands-free pointer. It moves the real system cursor and sends a real click when you pinch thumb and index. Tune gesture sensitivity and open your system’s accessibility settings to resize the real cursor.</p>
 
     <section class="downloads" aria-label="Download Finger Mouse">
-      <article class="card">
+      <article class="card" data-platform="windows">
         <h2>Windows</h2>
-        <p>Windows 10 or 11, 64-bit. Unzip the download and open the FingerMouse folder.</p>
-        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-windows-x64.zip">Download for Windows</a>
+        <p>Windows 10 or 11, 64-bit. A signed installer is recommended when available.</p>
+        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-windows-x64-setup.exe">Download Windows installer</a>
       </article>
-      <article class="card">
+      <article class="card" data-platform="mac-arm">
         <h2>macOS · Apple silicon</h2>
         <p>For M-series Macs. Move the app to Applications before granting camera and Accessibility permissions.</p>
-        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-macos-arm64.zip">Download for Apple silicon</a>
+        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-macos-arm64.dmg">Download DMG for Apple silicon</a>
       </article>
-      <article class="card">
+      <article class="card" data-platform="mac-intel">
         <h2>macOS · Intel</h2>
         <p>For Intel-based Macs. Move the app to Applications before granting camera and Accessibility permissions.</p>
-        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-macos-x64.zip">Download for Intel Mac</a>
+        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-macos-x64.dmg">Download DMG for Intel Mac</a>
       </article>
-      <article class="card">
+      <article class="card" data-platform="linux">
         <h2>Linux</h2>
-        <p>64-bit desktop Linux. Pointer control needs an X11 session; Wayland may restrict global mouse input.</p>
-        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-linux-x64.zip">Download for Linux</a>
+        <p>Source/X11 support is available. A tested Linux installer is not published yet; Wayland may restrict global mouse input.</p>
+        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse">View Linux setup</a>
       </article>
     </section>
 
@@ -66,5 +66,16 @@
     </section>
     <footer>Finger Mouse · Free and open source under the MIT License.</footer>
   </main>
+  <script>
+    // A visual recommendation only: every platform stays available to choose.
+    const agent = navigator.userAgent.toLowerCase();
+    const recommended = agent.includes('win') ? 'windows'
+      : agent.includes('mac') && /arm|aarch64/.test(agent) ? 'mac-arm'
+      : agent.includes('mac') ? 'mac-intel' : agent.includes('linux') ? 'linux' : null;
+    if (recommended) {
+      const card = document.querySelector(`[data-platform="${recommended}"]`);
+      if (card) { card.style.outline = '3px solid #79f0e8'; card.insertAdjacentHTML('afterbegin', '<strong>Recommended for your device</strong>'); }
+    }
+  </script>
 </body>
 </html>
