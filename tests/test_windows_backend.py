@@ -121,11 +121,16 @@ def _run_checks(backend, width, height):
         moves = hook.wait_for(1 + len(targets))[1:]
         assert [(e[1], e[2]) for e in moves] == targets
 
-        # 3. A click is move + down + up at the same point, in one burst.
-        hook.events.clear()
-        backend.click(200, 300)
-        click = hook.wait_for(3)
-        assert [e[0] for e in click] == [WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP]
+        # 3. A click is move + down + up at the same point, in one burst. A
+        # press lands wherever the pointer is at that instant, so a person
+        # moving their real mouse mid-test can shift it; allow a retry or two.
+        for _attempt in range(3):
+            hook.events.clear()
+            backend.click(200, 300)
+            click = hook.wait_for(3)
+            assert [e[0] for e in click] == [WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP]
+            if all((e[1], e[2]) == (200, 300) for e in click):
+                break
         assert all((e[1], e[2]) == (200, 300) for e in click)
 
         # 4. Press and release for dragging.

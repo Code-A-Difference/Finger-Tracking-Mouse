@@ -76,7 +76,7 @@ jobs:
         run: |
           set +e
           run=""; [ "$RUNNER_OS" = "Linux" ] && run="xvfb-run -a"
-          $run python -m pytest -q -rfE --tb=short > pytest.log 2>&1
+          $run python -m pytest -q -rfE --tb=short --capture=sys > pytest.log 2>&1
           status=$?
           cat pytest.log
           # Failures become annotations: readable on the run page and the public API.
