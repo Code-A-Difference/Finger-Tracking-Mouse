@@ -2,5 +2,6 @@ mediapipe==0.10.14
 numpy==1.26.4
 opencv-contrib-python==4.11.0.86
 PyAutoGUI==0.9.54
+pyobjc-framework-ApplicationServices>=10.0; sys_platform == "darwin"
 PySide6-Essentials==6.10.3
 pyinstaller==6.22.3
