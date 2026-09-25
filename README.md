@@ -1,10 +1,10 @@
 # Finger Mouse
 
-Finger Mouse is a hands-free desktop pointer controlled by a webcam. Point with your index fingertip and pinch thumb to index for one left-click. The app processes camera frames locally.
+Finger Mouse is a hands-free desktop pointer controlled by a webcam. It moves the computer’s real system cursor and sends a real left-click when you pinch your thumb and index finger. The app processes camera frames locally.
 
 ## Downloads
 
-The public download page is [website/downloads.html](website/downloads.html). After a version tag is published, the GitHub Actions workflow builds downloadable archives for Windows x64, macOS Apple silicon, macOS Intel, and Linux x64. To publish a release, create and push a version tag such as `v2.0.0`; Actions builds each platform and attaches the archives to the GitHub Release. A manual workflow run also creates downloadable CI artifacts.
+The public download page is [website/downloads.html](website/downloads.html). After a version tag is published, the GitHub Actions workflow builds downloadable archives for Windows x64, macOS Apple silicon, macOS Intel, and Linux x64. To publish a release, create and push a version tag such as `v2.1.0`; Actions builds each platform and attaches the archives to the GitHub Release. A manual workflow run also creates downloadable CI artifacts.
 
 The standalone page in `website/` links to the latest release assets. Follow [website/README.md](website/README.md) to add it to the Code-A-Difference website.
 
@@ -14,7 +14,8 @@ The standalone page in `website/` links to the latest release assets. Follow [we
 - Normalized thumb-index pinch distance with adjustable sensitivity.
 - Two-frame arm and click gates. A held pinch registers once; opening the fingers re-arms the next click.
 - Camera selection and wide (16:9) or standard (4:3) camera modes.
-- Adjustable pointer movement response and on-screen cursor halo size.
+- Adjustable pointer movement response and tracking halo size.
+- Native system cursor-size settings shortcut for Windows and macOS.
 - Settings saved in the user's application settings folder.
 - Escape stop shortcut, Stop button, and PyAutoGUI corner failsafe.
 - Runs on Windows, macOS, and Linux desktop systems with compatible webcam and OS permissions.
@@ -53,14 +54,14 @@ Choose **Automatic** to try camera devices 0–5, or select a camera manually. *
 4. Open thumb and index to arm clicking. Pinch their tips together for one left-click. Open the fingers to arm the next click.
 5. Use **Stop tracking** or press **Esc** while the app window is active. Moving the pointer into the screen's top-left corner activates the emergency failsafe.
 
-The **Pinch distance** slider adjusts how close the fingertips need to be. Raise it if pinches are missed or lower it if clicking triggers too early. **Movement response** changes pointer smoothing. **On-screen cursor size** changes the click-through halo around the pointer; the operating system's arrow size remains an OS accessibility setting.
+The **Pinch distance** slider adjusts how close the fingertips need to be. Raise it if pinches are missed or lower it if clicking triggers too early. **Movement response** changes pointer smoothing. **Tracking halo size** changes the visual indicator. Use **System cursor size…** to open the operating system’s own pointer-size setting; that changes the real cursor. On Linux, open your desktop environment’s Accessibility settings.
 
 ## Permissions and compatibility
 
-- **macOS:** allow Camera and Accessibility access for pointer control. The release bundles are ad-hoc signed, not notarized, so macOS may show an opening warning.
+- **macOS:** allow Camera access for tracking and allow Finger Mouse to send system mouse clicks when macOS asks. If the pointer does not move or click, enable Finger Mouse under **System Settings → Privacy & Security → Accessibility**, then quit and reopen the app. The release bundles are ad-hoc signed, not notarized, so macOS may show an opening warning.
 - **Windows:** allow camera access in Privacy & security settings.
-- **Linux:** use an X11 session and grant the logged-in user access to the webcam. Wayland may restrict global pointer control.
-- Movement maps to the primary display. Lighting, camera placement, hand visibility, and motion blur affect tracking.
+- **Linux:** use an X11 session and grant the logged-in user access to the webcam. Wayland may restrict global pointer movement and clicks; the app verifies system pointer movement and reports when the desktop blocks it.
+- Movement maps to the primary display. Lighting, camera placement, hand visibility, and motion blur affect tracking. The preview halo follows the fingertip, but the OS cursor is moved separately; the app stops with an error if the desktop refuses that movement.
 - A wide camera mode can request a wider sensor mode. Software cannot widen a camera lens or force a driver to expose a different physical field of view.
 - This is a desktop app. It does not control the system pointer on Android or iOS.
 
