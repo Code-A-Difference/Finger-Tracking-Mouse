@@ -57,9 +57,10 @@ def test_keeps_only_the_newest_frame_and_counts_what_it_dropped():
     g.start()
     try:
         first = g.wait_frame(0, 2)
-        time.sleep(0.2)                               # a slow tracker…
+        # A slow tracker: several frames arrive before it asks again…
+        assert wait_until(lambda: g.frames >= first.seq + 6, 5)
         latest = g.wait_frame(first.seq, 2)
-        assert latest.seq > first.seq + 5              # …gets the newest, not the backlog
+        assert latest.seq >= first.seq + 6            # …and it gets the newest, not the backlog
         assert g.dropped > 0
         assert "connected" in statuses
     finally:
