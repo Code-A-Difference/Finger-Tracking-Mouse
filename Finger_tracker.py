@@ -50,7 +50,7 @@ except ImportError as exc:
 
 
 APP_NAME = "Finger Mouse"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.002
 
@@ -108,6 +108,15 @@ def save_settings(settings: dict[str, Any]) -> None:
     except OSError:
         # Settings are helpful but must never prevent the mouse from starting.
         pass
+
+
+def _macos_app_bundle_path() -> str:
+    """Return the .app containing this process, or the executable path for source runs."""
+    executable = Path(sys.executable).resolve()
+    for parent in executable.parents:
+        if parent.suffix == ".app":
+            return str(parent)
+    return str(executable)
 
 
 class PinchClickDetector:
@@ -691,34 +700,59 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def _request_mouse_control_access(self) -> bool:
-        """Ask macOS for the permission needed to post system click events."""
+        """Check both macOS accessibility trust and permission to post events."""
         if sys.platform != "darwin":
             return True
+
+        accessibility_trusted = False
+        post_event_allowed = False
         try:
             import Quartz
+            from ApplicationServices import (
+                AXIsProcessTrustedWithOptions,
+                kAXTrustedCheckOptionPrompt,
+            )
 
             preflight = getattr(Quartz, "CGPreflightPostEventAccess", None)
             request = getattr(Quartz, "CGRequestPostEventAccess", None)
             if preflight is None or request is None:
-                raise RuntimeError("This macOS build cannot check mouse-control permission.")
-            if not preflight():
+                raise RuntimeError("Core Graphics mouse-control permission checks are unavailable.")
+
+            accessibility_trusted = bool(
+                AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: False})
+            )
+            post_event_allowed = bool(preflight())
+            if not post_event_allowed:
                 request()
-            if preflight():
+            post_event_allowed = bool(preflight())
+            accessibility_trusted = bool(
+                AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: False})
+            )
+            if post_event_allowed and accessibility_trusted:
                 return True
         except Exception as exc:
-            self.status.setText(f"Could not check macOS mouse permission: {exc}")
+            self.status.setText(f"Could not check macOS mouse permissions: {exc}")
             return False
 
-        self.status.setText("Allow Finger Mouse to control the computer, then start tracking again.")
+        app_path = _macos_app_bundle_path()
+        state = (
+            f"Accessibility: {'allowed' if accessibility_trusted else 'not allowed'}; "
+            f"system event posting: {'allowed' if post_event_allowed else 'not allowed'}."
+        )
+        self.status.setText("Allow Finger Mouse under Privacy & Security → Accessibility, then reopen it.")
         QDesktopServices.openUrl(
             QUrl("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
         )
         QMessageBox.warning(
             self,
             "Allow system mouse control",
-            "macOS has not allowed Finger Mouse to send system clicks. In System Settings, "
-            "open Privacy & Security → Accessibility and enable Finger Mouse. If it is not "
-            "listed, add the Finger Mouse app, quit it, reopen it, and try again.",
+            "macOS has not granted the running copy permission to control the pointer. "
+            f"{state}\n\n"
+            f"Running app: {app_path}\n\n"
+            "Quit Finger Mouse. In System Settings → Privacy & Security → Accessibility, "
+            "remove any old Finger Mouse entry, add and enable the exact app copy shown "
+            "above, then quit and reopen that same copy. Keep it in Applications after "
+            "granting permission; macOS treats different app copies as different apps.",
         )
         return False
 

@@ -56,7 +56,7 @@ The **Pinch distance** slider adjusts how close the fingertips need to be. Raise
 
 ## Permissions and compatibility
 
-- **macOS:** allow Camera access for tracking and allow Finger Mouse to send system mouse clicks when macOS asks. If the pointer does not move or click, enable Finger Mouse under **System Settings → Privacy & Security → Accessibility**, then quit and reopen the app. The release bundles are ad-hoc signed, not notarized, so macOS may show an opening warning.
+- **macOS:** move Finger Mouse to **Applications before granting permission**. Allow Camera access for tracking. For pointer movement and clicks, enable the same `/Applications/Finger Mouse.app` copy under **System Settings → Privacy & Security → Accessibility**, then quit and reopen it. If access remains blocked, remove old Finger Mouse entries and add that exact copy again. The app reports the Accessibility and event-posting checks separately and shows the path of the copy macOS needs to trust. Release bundles are ad-hoc signed, not notarized; macOS may show an opening warning, and after an update it may require granting Accessibility access again.
 - **Windows:** allow camera access in Privacy & security settings.
 - **Linux:** use an X11 session and grant the logged-in user access to the webcam. Wayland may restrict global pointer movement and clicks; the app verifies system pointer movement and reports when the desktop blocks it.
 - Movement maps to the primary display. Lighting, camera placement, hand visibility, and motion blur affect tracking. The preview halo follows the fingertip, but the OS cursor is moved separately; the app stops with an error if the desktop refuses that movement.
