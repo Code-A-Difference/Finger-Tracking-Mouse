@@ -105,7 +105,7 @@ class Watchdog(threading.Thread):
         self.interval = interval
         self._beats: dict[str, Heartbeat] = {}
         self._stalled: dict[str, float] = {}
-        self._stop = threading.Event()
+        self._halt = threading.Event()
         self._lock = threading.Lock()
         self.current: Optional[str] = None   # the stall in progress, for the UI
 
@@ -119,10 +119,10 @@ class Watchdog(threading.Thread):
             self._stalled.pop(name, None)
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
 
     def run(self) -> None:
-        while not self._stop.wait(self.interval):
+        while not self._halt.wait(self.interval):
             self.check()
 
     def check(self, now: Optional[float] = None) -> Optional[str]:
