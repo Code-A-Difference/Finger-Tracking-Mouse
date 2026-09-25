@@ -59,7 +59,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb libegl1 libgl1 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 \
-            libxcb-render-util0 libxcb-image0 libdbus-1-3
+            libxcb-render-util0 libxcb-image0 libdbus-1-3 libgles2
+          # libgles2: MediaPipe's native library links OpenGL ES (every desktop has it).
           # Deliberately no PortAudio: the app must start without it (see hand_tracker.py).
 
       - name: Install dependencies
@@ -188,9 +189,15 @@ jobs:
         run: |
           # A fresh container with only what a desktop has, so a library that
           # happens to be on the build machine can't hide a missing one.
-          docker run --rm -v "$PWD/dist:/dist" ubuntu:24.04 bash -c '
-            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends               xvfb xauth libgl1 libegl1 libfontconfig1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4               libxcb-keysyms1 libxcb-shape0 libxcb-randr0 libxcb-render-util0 libxcb-image0 libdbus-1-3 >/dev/null &&
-            cd /tmp && xvfb-run -a /dist/FingerMouse-linux-x86_64.AppImage --appimage-extract-and-run               --self-test /tmp/result.json; status=$?; cat /tmp/result.json; exit $status'
+          packages="xvfb xauth libgl1 libegl1 libgles2 libfontconfig1 libxkbcommon-x11-0 libxcb-cursor0
+                    libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-randr0 libxcb-render-util0
+                    libxcb-image0 libdbus-1-3"
+          docker run --rm -v "$PWD/dist:/dist" -e PACKAGES="$packages" ubuntu:24.04 bash -c '
+            apt-get update -qq &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $PACKAGES >/dev/null &&
+            cd /tmp &&
+            xvfb-run -a /dist/FingerMouse-linux-x86_64.AppImage --appimage-extract-and-run --self-test /tmp/result.json
+            status=$?; cat /tmp/result.json; exit $status'
 
       - name: Report signing status
         shell: bash

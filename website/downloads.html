@@ -82,7 +82,7 @@
       <h2>After downloading</h2>
       <p><strong>Windows:</strong> run the installer. If Windows shows “Windows protected your PC”, check that the publisher is Code-A-Difference, then choose <em>More info → Run anyway</em>. New apps can see this warning even when they're signed, until Microsoft's reputation system knows them.</p>
       <p><strong>macOS:</strong> drag Finger Mouse to Applications and open it from there. Allow the camera when asked, and turn on Finger Mouse under <em>System Settings → Privacy &amp; Security → Accessibility</em> so it can move the pointer, then reopen it. If macOS says it can't check the app, open it with right-click → <em>Open</em> the first time.</p>
-      <p><strong>Linux:</strong> <code>chmod +x FingerMouse-linux-x86_64.AppImage</code>, then run it. Use an X11 session (Wayland blocks apps from moving the pointer). If it doesn't start, install <code>libxcb-cursor0</code>.</p>
+      <p><strong>Linux:</strong> <code>chmod +x FingerMouse-linux-x86_64.AppImage</code>, then run it. Use an X11 session (Wayland blocks apps from moving the pointer). If it doesn't start, install <code>libxcb-cursor0</code> and <code>libgles2</code>.</p>
       <p>Each release lists SHA-256 checksums in <code>SHA256SUMS.txt</code> so you can check your download. Source code, all releases and the setup guide are on <a href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse">GitHub</a>.</p>
     </section>
     <footer>Finger Mouse · free and open source under the MIT License · Code-A-Difference</footer>
