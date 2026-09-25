@@ -4,9 +4,7 @@ Finger Mouse is a hands-free desktop pointer controlled by a webcam. It moves th
 
 ## Downloads
 
-The public download page is [website/downloads.html](website/downloads.html). After a version tag is published, the GitHub Actions workflow builds downloadable archives for Windows x64, macOS Apple silicon, macOS Intel, and Linux x64. To publish a release, create and push a version tag such as `v2.1.0`; Actions builds each platform and attaches the archives to the GitHub Release. A manual workflow run also creates downloadable CI artifacts.
-
-The standalone page in `website/` links to the latest release assets. Follow [website/README.md](website/README.md) to add it to the Code-A-Difference website.
+The public download page is published at [code-a-difference.github.io/Finger-Tracking-Mouse](https://code-a-difference.github.io/Finger-Tracking-Mouse/) from [website/downloads.html](website/downloads.html). It links to the latest GitHub Release. After a version tag is published, GitHub Actions builds archives for Windows x64, macOS Apple silicon, macOS Intel, and Linux x64. A manual workflow run also creates downloadable CI artifacts. The page can also be copied to the Code-A-Difference website later; see [website/README.md](website/README.md).
 
 ## Features
 
@@ -77,7 +75,7 @@ PyInstaller does not cross-compile camera, Qt, or mouse-control libraries. The G
 
 ## Website download page
 
-`website/downloads.html` is a standalone, responsive page with direct links to the latest release assets. Upload it to the site host and link to it from the main website. It will serve working binary links after the first tagged GitHub release.
+`website/downloads.html` is deployed through GitHub Pages at [code-a-difference.github.io/Finger-Tracking-Mouse](https://code-a-difference.github.io/Finger-Tracking-Mouse/). The page can also be copied to another site host later.
 
 ## License
 
