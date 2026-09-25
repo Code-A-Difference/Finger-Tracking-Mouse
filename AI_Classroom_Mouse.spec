@@ -61,8 +61,8 @@ if sys.platform == "darwin":
         name="Finger Mouse.app",
         bundle_identifier="app.fingermouse.desktop",
         info_plist={
-            "CFBundleShortVersionString": "2.0.0",
-            "CFBundleVersion": "2.0.0",
+            "CFBundleShortVersionString": "2.1.0",
+            "CFBundleVersion": "2.1.0",
             "NSCameraUsageDescription": "Finger Mouse uses your camera to track your hand and control the pointer.",
             "NSHighResolutionCapable": True,
         },

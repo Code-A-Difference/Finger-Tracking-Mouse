@@ -16,8 +16,18 @@ try:
     import mediapipe as mp
     import numpy as np
     import pyautogui
-    from PySide6.QtCore import QPoint, QRect, Qt, QThread, Signal
-    from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QShortcut, QKeySequence
+    from PySide6.QtCore import QPoint, QRect, Qt, QThread, Signal, QUrl
+    from PySide6.QtGui import (
+        QColor,
+        QCursor,
+        QDesktopServices,
+        QImage,
+        QPainter,
+        QPen,
+        QPixmap,
+        QShortcut,
+        QKeySequence,
+    )
     from PySide6.QtWidgets import (
         QApplication,
         QComboBox,
@@ -25,6 +35,7 @@ try:
         QHBoxLayout,
         QLabel,
         QMainWindow,
+        QMessageBox,
         QPushButton,
         QSlider,
         QVBoxLayout,
@@ -39,7 +50,7 @@ except ImportError as exc:
 
 
 APP_NAME = "Finger Mouse"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.002
 
@@ -150,6 +161,7 @@ class TrackingWorker(QThread):
     status_changed = Signal(str)
     frame_ready = Signal(QImage)
     cursor_changed = Signal(int, int)
+    click_requested = Signal()
     gesture_changed = Signal(str)
 
     def __init__(
@@ -313,7 +325,7 @@ class TrackingWorker(QThread):
                     )
                     click_state = click_detector.update(pinch_ratio)
                     if click_state == "clicked":
-                        pyautogui.click()
+                        self.click_requested.emit()
                         click_registered = True
                     if click_state is not None:
                         self.gesture_changed.emit(click_state)
@@ -327,9 +339,8 @@ class TrackingWorker(QThread):
                             alpha * target_y + (1.0 - alpha) * smoothed[1],
                         )
                     screen_size = pyautogui.size()
-                    cursor_x = int(np.clip(smoothed[0], 1, screen_size.width - 2))
-                    cursor_y = int(np.clip(smoothed[1], 1, screen_size.height - 2))
-                    pyautogui.moveTo(cursor_x, cursor_y)
+                    cursor_x = int(np.clip(smoothed[0], 2, screen_size.width - 3))
+                    cursor_y = int(np.clip(smoothed[1], 2, screen_size.height - 3))
                     self.cursor_changed.emit(cursor_x, cursor_y)
 
                     tip_a = (int(thumb_tip.x * width), int(thumb_tip.y * height))
@@ -447,6 +458,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = load_settings()
         self.worker: Optional[TrackingWorker] = None
+        self._system_control_error: Optional[str] = None
         self.overlay = CursorOverlay()
         self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
         self.setMinimumSize(760, 790)
@@ -509,11 +521,14 @@ class MainWindow(QMainWindow):
         settings_layout.setSpacing(8)
 
         cursor_row = QHBoxLayout()
-        cursor_label = QLabel("On-screen cursor size")
+        cursor_label = QLabel("Tracking halo size")
         self.cursor_value = QLabel()
         self.cursor_value.setObjectName("value")
         cursor_row.addWidget(cursor_label)
         cursor_row.addStretch(1)
+        self.system_cursor_button = QPushButton("System cursor size…")
+        self.system_cursor_button.clicked.connect(self._open_system_cursor_settings)
+        cursor_row.addWidget(self.system_cursor_button)
         cursor_row.addWidget(self.cursor_value)
         self.cursor_size = QSlider(Qt.Orientation.Horizontal)
         self.cursor_size.setRange(16, 80)
@@ -549,7 +564,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(settings_card)
 
         action_row = QHBoxLayout()
-        self.status = QLabel("Ready. Connect a webcam, then start tracking.")
+        self.status = QLabel("Ready. Start tracking to move the real system pointer and click.")
         self.status.setObjectName("status")
         self.status.setWordWrap(True)
         self.start_button = QPushButton("Start tracking")
@@ -649,6 +664,9 @@ class MainWindow(QMainWindow):
     def start_tracking(self) -> None:
         if self.worker is not None and self.worker.isRunning():
             return
+        if not self._request_mouse_control_access():
+            return
+        self._system_control_error = None
         self._persist_settings()
         self.preview.setText("Starting camera…")
         self.start_button.setText("Stop tracking")
@@ -665,10 +683,44 @@ class MainWindow(QMainWindow):
         )
         self.worker.status_changed.connect(self.status.setText)
         self.worker.frame_ready.connect(self._show_frame)
+        self.worker.cursor_changed.connect(self._move_system_pointer)
         self.worker.cursor_changed.connect(self.overlay.set_cursor_position)
+        self.worker.click_requested.connect(self._click_system_pointer)
         self.worker.gesture_changed.connect(self._gesture_status)
         self.worker.finished.connect(self._worker_finished)
         self.worker.start()
+
+    def _request_mouse_control_access(self) -> bool:
+        """Ask macOS for the permission needed to post system click events."""
+        if sys.platform != "darwin":
+            return True
+        try:
+            import Quartz
+
+            preflight = getattr(Quartz, "CGPreflightPostEventAccess", None)
+            request = getattr(Quartz, "CGRequestPostEventAccess", None)
+            if preflight is None or request is None:
+                raise RuntimeError("This macOS build cannot check mouse-control permission.")
+            if not preflight():
+                request()
+            if preflight():
+                return True
+        except Exception as exc:
+            self.status.setText(f"Could not check macOS mouse permission: {exc}")
+            return False
+
+        self.status.setText("Allow Finger Mouse to control the computer, then start tracking again.")
+        QDesktopServices.openUrl(
+            QUrl("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        )
+        QMessageBox.warning(
+            self,
+            "Allow system mouse control",
+            "macOS has not allowed Finger Mouse to send system clicks. In System Settings, "
+            "open Privacy & Security → Accessibility and enable Finger Mouse. If it is not "
+            "listed, add the Finger Mouse app, quit it, reopen it, and try again.",
+        )
+        return False
 
     def stop_tracking(self) -> None:
         if self.worker is not None and self.worker.isRunning():
@@ -680,17 +732,89 @@ class MainWindow(QMainWindow):
         self.start_button.setText("Start tracking")
         self.camera.setEnabled(True)
         self.camera_view.setEnabled(True)
+        if self._system_control_error:
+            self.status.setText(self._system_control_error)
         if self.worker is not None:
             self.worker.deleteLater()
         self.worker = None
 
     def _gesture_status(self, state: str) -> None:
+        if self._system_control_error:
+            return
         if state == "armed":
             self.status.setText("Click armed. Pinch thumb and index for one left-click.")
         elif state == "clicked":
             self.status.setText("Pinch click registered. Open fingers to re-arm.")
         elif state == "disarmed":
             self.status.setText("Hand lost. Show an open hand to arm clicking again.")
+
+    def _move_system_pointer(self, x: int, y: int) -> None:
+        """Move the OS cursor on Qt's GUI thread, then verify the real position."""
+        if self.worker is None or not self.worker.isRunning():
+            return
+        try:
+            QCursor.setPos(x, y)
+            actual = pyautogui.position()
+            if abs(actual.x - x) > 3 or abs(actual.y - y) > 3:
+                # Some desktop backends ignore Qt cursor warps. Try the native
+                # PyAutoGUI backend once from the GUI thread, then fail visibly.
+                pyautogui.moveTo(x, y, duration=0)
+                actual = pyautogui.position()
+            if abs(actual.x - x) > 3 or abs(actual.y - y) > 3:
+                self._report_system_control_error(
+                    "The desktop did not move its system pointer. Check mouse-control "
+                    "permissions or switch Linux to an X11 session."
+                )
+        except pyautogui.FailSafeException:
+            self._report_system_control_error(
+                "Safety stop: move the pointer away from the top-left corner, then start again."
+            )
+        except Exception as exc:
+            self._report_system_control_error(f"System pointer error: {exc}")
+
+    def _click_system_pointer(self) -> None:
+        """Send a real OS click at the system pointer's current location."""
+        try:
+            pyautogui.click()
+        except pyautogui.FailSafeException:
+            self._report_system_control_error(
+                "Safety stop: move the pointer away from the top-left corner, then start again."
+            )
+        except Exception as exc:
+            self._report_system_control_error(f"System click error: {exc}")
+
+    def _report_system_control_error(self, message: str) -> None:
+        self._system_control_error = message
+        self.status.setText(message)
+        if self.worker is not None:
+            self.worker.request_stop()
+
+    def _open_system_cursor_settings(self) -> None:
+        """Open native accessibility settings for the actual OS cursor."""
+        if sys.platform == "win32":
+            QDesktopServices.openUrl(QUrl("ms-settings:easeofaccess-mousepointer"))
+        elif sys.platform == "darwin":
+            import subprocess
+
+            try:
+                subprocess.Popen(["open", "-b", "com.apple.systempreferences"])
+                QMessageBox.information(
+                    self,
+                    "System cursor size",
+                    "In System Settings, open Accessibility → Display → Pointer size. "
+                    "That setting changes the real system cursor. The Tracking halo size "
+                    "slider only changes Finger Mouse’s visual tracking indicator.",
+                )
+            except OSError as exc:
+                QMessageBox.warning(self, "System Settings", str(exc))
+        else:
+            QMessageBox.information(
+                self,
+                "System cursor size",
+                "Open your desktop environment’s Accessibility settings and adjust the "
+                "mouse pointer size. The Tracking halo size slider changes only Finger "
+                "Mouse’s visual tracking indicator.",
+            )
 
     def _show_frame(self, image: QImage) -> None:
         pixmap = QPixmap.fromImage(image).scaled(
