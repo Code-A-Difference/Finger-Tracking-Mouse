@@ -112,15 +112,19 @@ jobs:
           set +e
           case "$RUNNER_OS" in
             Windows) powershell -Command "\$p = Start-Process dist/FingerMouse/FingerMouse.exe -ArgumentList '--self-test','selftest.json' -Wait -PassThru; exit \$p.ExitCode" ;;
-            macOS)   "dist/Finger Mouse.app/Contents/MacOS/FingerMouse" --self-test selftest.json ;;
-            Linux)   xvfb-run -a dist/FingerMouse/FingerMouse --self-test selftest.json ;;
+            macOS)   "dist/Finger Mouse.app/Contents/MacOS/FingerMouse" --self-test selftest.json > selftest.out 2>&1 ;;
+            Linux)   xvfb-run -a dist/FingerMouse/FingerMouse --self-test selftest.json > selftest.out 2>&1 ;;
           esac
           status=$?
+          cat selftest.out 2>/dev/null
           cat selftest.json
           if [ $status -ne 0 ]; then
-            # The result as an annotation, readable without the full log.
+            # The result, and whatever the app printed, as annotations readable without the full log.
             report=$(cat selftest.json 2>/dev/null || echo "no selftest.json: the app exited with $status before writing it")
             echo "::error title=self-test failed ($status)::$(echo "$report" | tr '\n' ' ' | cut -c1-3000)"
+            if [ -s selftest.out ]; then
+              echo "::error title=self-test output::$(tail -n 40 selftest.out | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | cut -c1-4000)"
+            fi
           fi
           exit $status
 
