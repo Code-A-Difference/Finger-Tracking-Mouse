@@ -37,7 +37,8 @@ def main(path: str) -> None:
         start = next((i for i, l in enumerate(lines) if "Fatal Python error" in l), None)
         excerpt = lines[start:start + 45] if start is not None else lines[-40:]
         print(f"::error title=pytest crashed::{escape(chr(10).join(excerpt)[:4000])}")
-        before = lines[max(0, (start or 0) - 12):start or 0]
+        before = [l for l in lines[:start or 0] if "Check failed" in l or l.startswith("F0")][-5:]
+        before += lines[max(0, (start or 0) - 12):start or 0]
         if before:
             print(f"::error title=pytest output before the crash::{escape(chr(10).join(before)[:2000])}")
 
