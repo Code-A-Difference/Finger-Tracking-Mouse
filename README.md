@@ -99,7 +99,7 @@ virtual ones often come first in the list and show a blank picture.
   says so and explains what to do.
 - **Linux:** use an X11 session; Wayland blocks apps from moving the pointer,
   and Finger Mouse tells you if it can't. If the AppImage won't start,
-  install `libxcb-cursor0`.
+  install `libxcb-cursor0` and `libgles2`.
 
 ## If something goes wrong
 
