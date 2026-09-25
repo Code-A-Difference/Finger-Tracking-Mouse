@@ -22,7 +22,13 @@ ROOT = Path(__file__).resolve().parent.parent
 MODEL = ROOT / "models" / "hand_landmarker.task"
 DATA = Path(__file__).parent / "data"
 
-pytestmark = pytest.mark.skipif(not MODEL.exists(), reason="model not downloaded (tools/fetch_model.py)")
+import hand_tracker  # noqa: E402
+
+pytestmark = [
+    pytest.mark.skipif(not MODEL.exists(), reason="model not downloaded (tools/fetch_model.py)"),
+    pytest.mark.skipif(not hand_tracker.metal_available(),
+                       reason="no Metal device (MediaPipe on Apple silicon needs one; CI runners lack it)"),
+]
 
 
 def jpeg_frames():

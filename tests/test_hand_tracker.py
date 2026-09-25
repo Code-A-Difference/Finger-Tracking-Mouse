@@ -10,6 +10,11 @@ import hand_tracker
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.mark.skipif(not (ROOT / "models" / "hand_landmarker.task").exists(), reason="model not downloaded")
+def test_bundle_check_needs_no_graph():
+    assert "SHA-256 ok" in hand_tracker.check_bundle()
+
+
 def test_a_damaged_or_missing_model_is_refused(tmp_path):
     bad = tmp_path / "hand_landmarker.task"
     bad.write_bytes(b"not a model")
@@ -20,6 +25,7 @@ def test_a_damaged_or_missing_model_is_refused(tmp_path):
 
 
 @pytest.mark.skipif(not (ROOT / "models" / "hand_landmarker.task").exists(), reason="model not downloaded")
+@pytest.mark.skipif(not hand_tracker.metal_available(), reason="no Metal device (Apple-silicon CI runner)")
 def test_hand_tracking_starts_without_the_portaudio_library():
     # On Linux, `import sounddevice` raises OSError when PortAudio isn't
     # installed, and MediaPipe imports it on load. Simulate that here.
