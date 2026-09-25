@@ -13,8 +13,10 @@ and installed apps live in exactly those paths.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import logging
+import platform
 import sys
 import time
 from pathlib import Path
@@ -56,6 +58,45 @@ def _allow_missing_audio() -> None:
 _allow_missing_audio()
 
 
+_metal: Optional[bool] = None
+
+
+def metal_available() -> bool:
+    """Whether MediaPipe can start on this machine's graphics setup.
+
+    MediaPipe 1.0's Apple-silicon build sets up Metal (Apple's GPU API) while
+    starting the hand model, even though inference runs on the CPU, and if
+    there's no Metal device it aborts the whole process. Every real Mac has
+    one; virtual machines (such as CI runners) may not. Asking Metal first is
+    harmless, so the app can say what's wrong instead of vanishing.
+    """
+    global _metal
+    if _metal is None:
+        if sys.platform != "darwin" or platform.machine() != "arm64":
+            _metal = True
+        else:
+            try:
+                lib = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/Metal.framework/Metal")
+                lib.MTLCreateSystemDefaultDevice.restype = ctypes.c_void_p
+                _metal = bool(lib.MTLCreateSystemDefaultDevice())
+            except (OSError, AttributeError):
+                _metal = False
+    return _metal
+
+
+NO_METAL = ("Hand tracking needs a Metal graphics device, and this Mac doesn't report one "
+            "(is it a virtual machine?).")
+
+
+def check_bundle() -> str:
+    """Verify the model and MediaPipe's native library without starting a graph."""
+    model = load_model_bytes()
+    from mediapipe.tasks.python.core import mediapipe_c_bindings
+
+    mediapipe_c_bindings.load_raw_library()
+    return f"model {len(model):,} bytes (SHA-256 ok), native library loads"
+
+
 def resource_dir() -> Path:
     """Where bundled files live: next to the source, or inside the PyInstaller bundle."""
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -89,6 +130,8 @@ class HandTracker:
         self._last_ts = 0
         self._impl: Any = None
         self._legacy: Any = None
+        if not metal_available():
+            raise RuntimeError(NO_METAL)
         try:
             self._open_tasks(model if model is not None else load_model_bytes())
         except Exception as exc:
