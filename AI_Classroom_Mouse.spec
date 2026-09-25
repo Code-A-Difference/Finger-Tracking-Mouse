@@ -42,6 +42,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    version="version_info.txt" if sys.platform == "win32" else None,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -64,8 +65,8 @@ if sys.platform == "darwin":
         name="Finger Mouse.app",
         bundle_identifier="app.fingermouse.desktop",
         info_plist={
-            "CFBundleShortVersionString": "2.1.1",
-            "CFBundleVersion": "2.1.1",
+            "CFBundleShortVersionString": "2.2.0",
+            "CFBundleVersion": "2.2.0",
             "NSCameraUsageDescription": "Finger Mouse uses your camera to track your hand and control the pointer.",
             "NSHighResolutionCapable": True,
         },

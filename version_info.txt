@@ -1,0 +1,16 @@
+# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=(2, 2, 0, 0), prodvers=(2, 2, 0, 0)),
+  kids=[
+    StringFileInfo([StringTable('040904B0', [
+      StringStruct('CompanyName', 'Code-A-Difference'),
+      StringStruct('FileDescription', 'Webcam hand-tracking accessibility mouse'),
+      StringStruct('FileVersion', '2.2.0'),
+      StringStruct('InternalName', 'FingerMouse'),
+      StringStruct('OriginalFilename', 'FingerMouse.exe'),
+      StringStruct('ProductName', 'Finger Mouse'),
+      StringStruct('ProductVersion', '2.2.0'),
+    ])]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)

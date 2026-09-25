@@ -16,6 +16,14 @@ The public download page is published at [code-a-difference.github.io/Finger-Tra
 - Native system cursor-size settings shortcut for Windows and macOS.
 - Settings saved in the user's application settings folder.
 - Escape stop shortcut, Stop button, and PyAutoGUI corner failsafe.
+- Pinch-start cursor locking: a short pinch clicks exactly where the pinch began,
+  while a configurable hold becomes a drag that always releases on stop, error,
+  or hand loss.
+- Deliberate index-only scrolling with a dead zone and rate limit; it is disabled
+  while pinching or dragging.
+- Lightweight file diagnostics at `~/FingerMouse.log` for camera and inference faults.
+- Optional, confirmation-gated middle-finger gesture that only stops and hides
+  Finger Mouse; it never terminates other applications.
 - Runs on Windows, macOS, and Linux desktop systems with compatible webcam and OS permissions.
 
 ## Run from source
@@ -49,7 +57,7 @@ Choose **Automatic** to try camera devices 0–5, or select a camera manually. *
 1. Start the app and allow camera access when asked.
 2. Select your camera and choose **Start tracking**.
 3. Move your index fingertip to move the pointer.
-4. Open thumb and index to arm clicking. Pinch their tips together for one left-click. Open the fingers to arm the next click.
+4. Open thumb and index to arm clicking. Pinch their tips together for one left-click, or hold the pinch to drag. Open the fingers to release/re-arm.
 5. Use **Stop tracking** or press **Esc** while the app window is active. Moving the pointer into the screen's top-left corner activates the emergency failsafe.
 
 The **Pinch distance** slider adjusts how close the fingertips need to be. Raise it if pinches are missed or lower it if clicking triggers too early. **Movement response** changes pointer smoothing. **Tracking halo size** changes the visual indicator. Use **System cursor size…** to open the operating system’s own pointer-size setting; that changes the real cursor. On Linux, open your desktop environment’s Accessibility settings.
@@ -71,7 +79,15 @@ Install `requirements.txt`, then build on the target operating system and archit
 python -m PyInstaller --noconfirm AI_Classroom_Mouse.spec
 ```
 
-PyInstaller does not cross-compile camera, Qt, or mouse-control libraries. The GitHub Actions workflow performs native builds for Windows x64, macOS Apple silicon, macOS Intel, and Linux x64. Review the licenses for Qt, MediaPipe, OpenCV, and other bundled dependencies before redistributing binaries.
+PyInstaller does not cross-compile camera, Qt, or mouse-control libraries. The GitHub Actions workflow performs native builds for Windows x64 and both macOS architectures. Linux remains source/X11 supported until a tested installer is available. Review the licenses for Qt, MediaPipe, OpenCV, and other bundled dependencies before redistributing binaries.
+
+## Release and signing
+
+Windows releases are packaged as an Inno Setup installer; macOS releases use a
+DMG. Linux is source/X11 supported until a tested package is available. See
+[RELEASING.md](RELEASING.md) for secure Authenticode signing, macOS Developer ID
+notarization, and the reason a newly signed app can still receive reputation
+warnings.
 
 ## Website download page
 
