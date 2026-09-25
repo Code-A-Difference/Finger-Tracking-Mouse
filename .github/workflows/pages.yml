@@ -1,16 +1,23 @@
 name: Publish download page
 
+# Publishes website/downloads.html with a release.json snapshot of the latest
+# release's files beside it, so the page shows real, current downloads. The
+# release workflow triggers this after publishing a release.
+
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
-      - "website/downloads.html"
+      - "website/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -22,18 +29,22 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-      - name: Prepare static site
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Prepare site
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p _site
           cp website/downloads.html _site/index.html
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+          # Only the fields the page uses. If there's no release yet, the page
+          # says so instead of linking anything.
+          gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
+            --jq '{tag_name, published_at, html_url, assets: [.assets[] | {name, size, browser_download_url}]}' \
+            > _site/release.json || echo '{}' > _site/release.json
+          cat _site/release.json
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - id: deployment
         uses: actions/deploy-pages@v4

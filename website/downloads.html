@@ -4,78 +4,160 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#08111f">
-  <meta name="description" content="Download Finger Mouse, a free webcam-powered hand tracking mouse for Windows, macOS, and Linux.">
+  <meta name="description" content="Download Finger Mouse, a free hand-tracking mouse for Windows, macOS and Linux: point with a finger, pinch to click, all on your own computer.">
   <title>Download Finger Mouse | Code-A-Difference</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #08111f; color: #edf4ff; }
     * { box-sizing: border-box; }
     body { margin: 0; background: radial-gradient(ellipse at 50% -20%, #17365b 0, #08111f 56%); min-height: 100vh; }
-    main { width: min(940px, calc(100% - 32px)); margin: 0 auto; padding: 64px 0 48px; }
+    main { width: min(980px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0 48px; }
     .brand { color: #60e4df; font-size: .82rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
-    h1 { max-width: 760px; margin: 18px 0 14px; font-size: clamp(2.5rem, 8vw, 5.4rem); line-height: .98; letter-spacing: -.06em; }
-    .intro { max-width: 680px; color: #b7c7dd; font-size: 1.15rem; line-height: 1.7; }
-    .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 14px; margin: 36px 0 22px; }
-    .card { border: 1px solid #263c58; background: #101e30; border-radius: 18px; padding: 22px; display: flex; flex-direction: column; min-height: 208px; }
-    .card h2 { margin: 0 0 8px; font-size: 1.16rem; }
-    .card p { color: #aabbd1; line-height: 1.55; flex: 1; margin: 0 0 20px; font-size: .93rem; }
-    .button { display: inline-flex; min-height: 46px; align-items: center; justify-content: center; text-align: center; padding: 10px 14px; border-radius: 10px; background: #16c6c3; color: #05151d; text-decoration: none; font-weight: 800; }
+    h1 { max-width: 760px; margin: 18px 0 14px; font-size: clamp(2.4rem, 7vw, 5rem); line-height: 1; letter-spacing: -.05em; }
+    .intro { max-width: 680px; color: #b7c7dd; font-size: 1.12rem; line-height: 1.7; }
+    .version { color: #8fb3c9; font-size: .95rem; margin-top: 8px; min-height: 1.5em; }
+    .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 30px 0 22px; }
+    .card { position: relative; border: 1px solid #263c58; background: #101e30; border-radius: 18px; padding: 22px; display: flex; flex-direction: column; min-height: 230px; }
+    .card.recommended { border-color: #79f0e8; box-shadow: 0 0 0 1px #79f0e8, 0 12px 40px -18px #16c6c3; }
+    .badge { display: none; align-self: flex-start; margin-bottom: 10px; font-size: .74rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #05151d; background: #79f0e8; border-radius: 999px; padding: 3px 10px; }
+    .card.recommended .badge { display: inline-block; }
+    .card h2 { margin: 0 0 6px; font-size: 1.15rem; }
+    .card p { color: #aabbd1; line-height: 1.55; flex: 1; margin: 0 0 18px; font-size: .92rem; }
+    .button { display: inline-flex; min-height: 46px; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 10px 14px; border-radius: 10px; background: #16c6c3; color: #05151d; text-decoration: none; font-weight: 800; }
     .button:hover, .button:focus-visible { background: #79f0e8; outline: 3px solid #fff; outline-offset: 3px; }
-    .details { border-top: 1px solid #263c58; margin-top: 32px; padding-top: 24px; color: #b7c7dd; line-height: 1.7; }
-    .details h2 { color: #edf4ff; font-size: 1.1rem; }
+    .button[aria-disabled="true"] { background: #1c2c42; color: #8094ad; cursor: default; outline: none; }
+    .size { font-weight: 600; opacity: .75; }
+    .file { margin-top: 8px; font-size: .78rem; color: #7f93ad; overflow-wrap: anywhere; }
+    .details { border-top: 1px solid #263c58; margin-top: 30px; padding-top: 22px; color: #b7c7dd; line-height: 1.7; }
+    .details h2 { color: #edf4ff; font-size: 1.1rem; margin-top: 26px; }
     .details a { color: #70e9e1; }
+    .details code { background: #13233a; padding: 1px 6px; border-radius: 5px; }
     .privacy { border-left: 3px solid #16c6c3; padding-left: 14px; }
     footer { margin-top: 32px; color: #8094ad; font-size: .88rem; }
+    @media (prefers-reduced-motion: no-preference) { .button { transition: background .15s; } }
   </style>
 </head>
 <body>
   <main>
     <div class="brand">Code-A-Difference · Accessibility tools</div>
     <h1>Move your mouse with your hand.</h1>
-    <p class="intro">Finger Mouse turns a webcam into a hands-free pointer. It moves the real system cursor and sends a real click when you pinch thumb and index. Tune gesture sensitivity and open your system’s accessibility settings to resize the real cursor.</p>
+    <p class="intro">Finger Mouse turns a webcam into a hands-free pointer. Point with your index finger to move, pinch to click, pinch and hold to drag, and raise two fingers to scroll. It runs on your computer and never sends your video anywhere.</p>
+    <p class="version" id="version" aria-live="polite">Checking the latest version…</p>
 
-    <section class="downloads" aria-label="Download Finger Mouse">
+    <section class="downloads" aria-label="Downloads">
       <article class="card" data-platform="windows">
+        <span class="badge">Recommended for you</span>
         <h2>Windows</h2>
-        <p>Windows 10 or 11, 64-bit. A signed installer is recommended when available.</p>
-        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-windows-x64-setup.exe">Download Windows installer</a>
+        <p>Windows 10 or 11, 64-bit. A standard installer: no administrator rights needed, and it adds Finger Mouse to the Start menu.</p>
+        <a class="button" data-asset="FingerMouse-windows-x64-setup.exe" aria-disabled="true">Checking…</a>
+        <div class="file"></div>
       </article>
       <article class="card" data-platform="mac-arm">
+        <span class="badge">Recommended for you</span>
         <h2>macOS · Apple silicon</h2>
-        <p>For M-series Macs. Move the app to Applications before granting camera and Accessibility permissions.</p>
-        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-macos-arm64.dmg">Download DMG for Apple silicon</a>
+        <p>M1 and newer Macs, macOS 13 Ventura or later. Open the disk image and drag Finger Mouse to Applications.</p>
+        <a class="button" data-asset="FingerMouse-macos-arm64.dmg" aria-disabled="true">Checking…</a>
+        <div class="file"></div>
       </article>
       <article class="card" data-platform="mac-intel">
+        <span class="badge">Recommended for you</span>
         <h2>macOS · Intel</h2>
-        <p>For Intel-based Macs. Move the app to Applications before granting camera and Accessibility permissions.</p>
-        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest/download/FingerMouse-macos-x64.dmg">Download DMG for Intel Mac</a>
+        <p>Intel Macs, macOS 13 Ventura or later. Open the disk image and drag Finger Mouse to Applications.</p>
+        <a class="button" data-asset="FingerMouse-macos-x64.dmg" aria-disabled="true">Checking…</a>
+        <div class="file"></div>
       </article>
       <article class="card" data-platform="linux">
+        <span class="badge">Recommended for you</span>
         <h2>Linux</h2>
-        <p>Source/X11 support is available. A tested Linux installer is not published yet; Wayland may restrict global mouse input.</p>
-        <a class="button" href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse">View Linux setup</a>
+        <p>64-bit, glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+, Fedora 36+), in an X11 session. One file: make it executable and run it.</p>
+        <a class="button" data-asset="FingerMouse-linux-x86_64.AppImage" aria-disabled="true">Checking…</a>
+        <div class="file"></div>
       </article>
     </section>
 
     <section class="details" aria-labelledby="how-title">
       <h2 id="how-title">How it works</h2>
-      <p>Start the app, choose your camera, then point with your index finger to move the real system cursor. Open thumb and index to arm one click; pinch them together to click once. Open them again to re-arm. Use <strong>System cursor size</strong> to change the actual pointer in your operating system’s accessibility settings. Press Esc or use Stop to end tracking.</p>
-      <p class="privacy"><strong>Private by design:</strong> camera frames are processed on your computer. The app does not send camera video to a server.</p>
-      <h2>Before you download</h2>
-      <p>Finger Mouse moves the system pointer and sends real clicks, so the operating system may ask for camera and Accessibility permissions. On macOS, move the app to Applications first, then enable that same copy in System Settings → Privacy &amp; Security → Accessibility and quit and reopen it. If permission is still blocked, remove old Finger Mouse entries and add the app from Applications. Downloads are ad-hoc signed and not notarized; macOS may show a security warning and may ask you to grant Accessibility access again after an update. On Linux, use an X11 session; Wayland may block system-wide input. This is a desktop app; it does not control the system mouse on phones or tablets.</p>
-      <p>See the <a href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse">source code and setup guide on GitHub</a>, or browse <a href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest">all releases</a>.</p>
+      <p>Start Finger Mouse and choose <strong>Start tracking</strong>. Point with your index finger to move the real pointer. A quick pinch of thumb and index clicks where the pinch began; pinch and hold to press and drag, then open your fingers to drop. Hold up two fingers (index and middle) and move up or down to scroll. Moving your real mouse pauses hand control, and <kbd>Esc</kbd> stops tracking. Everything is adjustable in <strong>Settings</strong>.</p>
+      <p class="privacy"><strong>Private by design:</strong> the camera picture is processed on your computer. Finger Mouse doesn't need the internet and doesn't send video anywhere.</p>
+
+      <h2>After downloading</h2>
+      <p><strong>Windows:</strong> run the installer. If Windows shows “Windows protected your PC”, check that the publisher is Code-A-Difference, then choose <em>More info → Run anyway</em>. New apps can see this warning even when they're signed, until Microsoft's reputation system knows them.</p>
+      <p><strong>macOS:</strong> drag Finger Mouse to Applications and open it from there. Allow the camera when asked, and turn on Finger Mouse under <em>System Settings → Privacy &amp; Security → Accessibility</em> so it can move the pointer, then reopen it. If macOS says it can't check the app, open it with right-click → <em>Open</em> the first time.</p>
+      <p><strong>Linux:</strong> <code>chmod +x FingerMouse-linux-x86_64.AppImage</code>, then run it. Use an X11 session (Wayland blocks apps from moving the pointer). If it doesn't start, install <code>libxcb-cursor0</code>.</p>
+      <p>Each release lists SHA-256 checksums in <code>SHA256SUMS.txt</code> so you can check your download. Source code, all releases and the setup guide are on <a href="https://github.com/Code-A-Difference/Finger-Tracking-Mouse">GitHub</a>.</p>
     </section>
-    <footer>Finger Mouse · Free and open source under the MIT License.</footer>
+    <footer>Finger Mouse · free and open source under the MIT License · Code-A-Difference</footer>
   </main>
   <script>
-    // A visual recommendation only: every platform stays available to choose.
-    const agent = navigator.userAgent.toLowerCase();
-    const recommended = agent.includes('win') ? 'windows'
-      : agent.includes('mac') && /arm|aarch64/.test(agent) ? 'mac-arm'
-      : agent.includes('mac') ? 'mac-intel' : agent.includes('linux') ? 'linux' : null;
-    if (recommended) {
-      const card = document.querySelector(`[data-platform="${recommended}"]`);
-      if (card) { card.style.outline = '3px solid #79f0e8'; card.insertAdjacentHTML('afterbegin', '<strong>Recommended for your device</strong>'); }
-    }
+    (() => {
+      const REPO = "Code-A-Difference/Finger-Tracking-Mouse";
+
+      // A recommendation only: every platform stays available.
+      async function detectPlatform() {
+        const ua = navigator.userAgent.toLowerCase();
+        const uad = navigator.userAgentData;
+        const platform = (uad && uad.platform || "").toLowerCase();
+        if (/android|iphone|ipad|ipod/.test(ua) || (uad && uad.mobile)) return null;
+        if (platform === "windows" || ua.includes("windows")) return "windows";
+        if (platform === "macos" || ua.includes("mac os")) {
+          try {                                           // Chromium can tell us the CPU
+            const hints = await uad.getHighEntropyValues(["architecture"]);
+            if (hints.architecture) return hints.architecture === "arm" ? "mac-arm" : "mac-intel";
+          } catch (_) {}
+          try {                                           // otherwise Apple GPUs mean Apple silicon
+            const gl = document.createElement("canvas").getContext("webgl");
+            const ext = gl && gl.getExtension("WEBGL_debug_renderer_info");
+            const renderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "";
+            if (/apple/i.test(renderer) && !/intel|amd|radeon/i.test(renderer)) return "mac-arm";
+            if (/intel|amd|radeon/i.test(renderer)) return "mac-intel";
+          } catch (_) {}
+          return "mac-arm";                               // most Macs sold since 2021
+        }
+        if (platform === "linux" || ua.includes("linux")) return "linux";
+        return null;
+      }
+
+      // release.json is written when the page is published (always current,
+      // no rate limits); the GitHub API is the fallback.
+      async function latestRelease() {
+        for (const url of ["release.json", `https://api.github.com/repos/${REPO}/releases/latest`]) {
+          try {
+            const r = await fetch(url, { cache: "no-store" });
+            if (r.ok) return await r.json();
+          } catch (_) {}
+        }
+        return null;
+      }
+
+      const mb = bytes => `${Math.round(bytes / 1048576)} MB`;
+
+      detectPlatform().then(p => {
+        const card = p && document.querySelector(`[data-platform="${p}"]`);
+        if (card) card.classList.add("recommended");
+      });
+
+      latestRelease().then(release => {
+        const assets = new Map(((release && release.assets) || []).map(a => [a.name, a]));
+        document.getElementById("version").textContent = release
+          ? `Latest version: ${release.tag_name.replace(/^v/, "")}` + (release.published_at ? ` · released ${new Date(release.published_at).toLocaleDateString()}` : "")
+          : "Couldn't reach GitHub to check the latest version. All releases are on GitHub.";
+        document.querySelectorAll("[data-asset]").forEach(button => {
+          const asset = assets.get(button.dataset.asset);
+          const label = button.closest(".card").querySelector("h2").textContent;
+          if (asset) {
+            button.href = asset.browser_download_url;
+            button.removeAttribute("aria-disabled");
+            button.innerHTML = `Download for ${label} <span class="size">${mb(asset.size)}</span>`;
+            button.nextElementSibling.textContent = asset.name;
+          } else {
+            // Never link to a file that isn't there.
+            button.removeAttribute("href");
+            button.textContent = release ? "Not available yet" : "Unavailable right now";
+            button.nextElementSibling.textContent = release
+              ? `The ${release.tag_name} release has no installer for this system yet.` : "";
+          }
+        });
+      });
+    })();
   </script>
 </body>
 </html>

@@ -1,11 +1,29 @@
-"""Finger Mouse: control the desktop pointer with one hand and a webcam."""
+"""Finger Mouse: control the desktop pointer with one hand and a webcam.
+
+This file is the window. The work happens elsewhere, each piece on its own
+thread so none can freeze another:
+
+    camera.py           capture thread: newest frame only, reconnects itself
+    tracking_engine.py  tracking thread: hand landmarks -> gestures
+    gesture_state.py    what a hand means (click, drag, scroll, hide)
+    pointer_output.py   output thread: the real OS pointer, always released
+    diagnostics.py      logs, and a watchdog that names whatever stalls
+    app_settings.py     settings: validated, migrated, saved atomically
+
+The window polls the engine's latest snapshot on a timer instead of being
+sent every frame, so a slow repaint can never back up the tracker.
+
+Run ``python Finger_tracker.py --self-test [result.json]`` to check an
+installed copy without a camera: it loads the hand model, runs it once, and
+checks the pointer backend and Qt.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
-import math
 import os
+import queue
 import sys
 import threading
 import time
@@ -13,36 +31,23 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
-    import cv2
-    import mediapipe as mp
     import numpy as np
-    import pyautogui
-    from PySide6.QtCore import QPoint, QRect, Qt, QThread, Signal, QUrl
-    from PySide6.QtGui import (
-        QColor,
-        QCursor,
-        QDesktopServices,
-        QImage,
-        QPainter,
-        QPen,
-        QPixmap,
-        QShortcut,
-        QKeySequence,
-    )
-    from PySide6.QtWidgets import (
-        QApplication,
-        QCheckBox,
-        QComboBox,
-        QFrame,
-        QHBoxLayout,
-        QLabel,
-        QMainWindow,
-        QMessageBox,
-        QPushButton,
-        QSlider,
-        QVBoxLayout,
-        QWidget,
-    )
+    from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
+    from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QGuiApplication, QIcon, QImage,
+                               QKeySequence, QPainter, QPen, QPixmap, QShortcut)
+    from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+                                   QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
+                                   QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider,
+                                   QSystemTrayIcon, QTabWidget, QVBoxLayout, QWidget)
+
+    import app_settings
+    from app_settings import Settings
+    from app_version import APP_NAME, APP_VERSION, PUBLISHER, SOURCE_URL
+    from camera import CameraCapabilities, CameraInfo, OpenCVCamera, list_cameras, probe_camera_indices, \
+        probe_resolutions, validate_stream_url
+    from diagnostics import Heartbeat, Watchdog, setup_logging
+    from pointer_output import PointerOutput, create_backend
+    from tracking_engine import TrackingEngine
 except ImportError as exc:
     raise SystemExit(
         "Finger Mouse is missing a dependency. Install the packages from "
@@ -50,1046 +55,1117 @@ except ImportError as exc:
         f"Details: {exc}"
     ) from exc
 
-from gesture_state import GestureAction, PinchGesture
+log = logging.getLogger("finger_mouse")
+
+ASSETS = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "assets"
+ICON_PATH = ASSETS / "icon.png"
+
+GESTURE_COLORS = {
+    "ready": "#fbbf24", "pinched": "#34d399", "dragging": "#38bdf8", "scrolling": "#a78bfa",
+    "paused": "#f87171", "hide": "#f87171", "no_hand": "#8290a6", "open": "#cbd5e1",
+    "pointing": "#cbd5e1", "starting": "#8290a6",
+}
 
 
-APP_NAME = "Finger Mouse"
-APP_VERSION = "2.2.0"
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.002
-logging.basicConfig(
-    filename=str(Path.home() / "FingerMouse.log"),
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
+def app_icon() -> QIcon:
+    return QIcon(str(ICON_PATH)) if ICON_PATH.exists() else QIcon()
 
 
-def settings_file() -> Path:
-    """Return a per-user settings path without writing into the app bundle."""
-    if sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / APP_NAME / "settings.json"
+def native_to_logical(x: int, y: int) -> QPoint:
+    """Turn native desktop coordinates into Qt's.
+
+    On Windows the pointer works in physical pixels while Qt lays out in
+    scaled ones, per screen; Qt keeps each screen's top-left corner in native
+    units and scales from there. macOS points and X11 pixels already match Qt.
+    """
+    if sys.platform != "win32":
+        return QPoint(x, y)
+    for screen in QGuiApplication.screens():
+        g = screen.geometry()
+        dpr = screen.devicePixelRatio()
+        native = QRect(g.topLeft(), QSize(round(g.width() * dpr), round(g.height() * dpr)))
+        if native.contains(x, y):
+            return QPoint(g.x() + round((x - g.x()) / dpr), g.y() + round((y - g.y()) / dpr))
+    return QPoint(x, y)
 
 
-def load_settings() -> dict[str, Any]:
-    defaults: dict[str, Any] = {
-        "camera": -1,
-        "camera_view": "wide",
-        "response": 18,
-        "cursor_size": 36,
-        "pinch_distance": 30,
-        "pinch_hold_ms": 420,
-        "scroll_enabled": True,
-        "scroll_sensitivity": 35,
-        "show_landmarks": True,
-        "flip_off_enabled": False,
-    }
-    try:
-        with settings_file().open("r", encoding="utf-8") as handle:
-            loaded = json.load(handle)
-        if isinstance(loaded, dict):
-            defaults.update(loaded)
-    except (OSError, ValueError, TypeError):
-        pass
+# ---------------------------------------------------------------------------
+# The halo that follows the pointer
+# ---------------------------------------------------------------------------
 
-    defaults["camera"] = _bounded_int(defaults.get("camera"), -1, 5, -1)
-    if defaults.get("camera_view") not in ("wide", "standard"):
-        defaults["camera_view"] = "wide"
-    defaults["response"] = _bounded_int(defaults.get("response"), 5, 50, 18)
-    defaults["cursor_size"] = _bounded_int(defaults.get("cursor_size"), 16, 80, 36)
-    defaults["pinch_distance"] = _bounded_int(defaults.get("pinch_distance"), 15, 50, 30)
-    defaults["pinch_hold_ms"] = _bounded_int(defaults.get("pinch_hold_ms"), 150, 1500, 420)
-    defaults["scroll_sensitivity"] = _bounded_int(defaults.get("scroll_sensitivity"), 5, 100, 35)
-    for key, fallback in (("scroll_enabled", True), ("show_landmarks", True), ("flip_off_enabled", False)):
-        defaults[key] = bool(defaults.get(key, fallback))
-    return defaults
+class HaloOverlay(QWidget):
+    """A small, click-through ring that follows the tracked pointer.
 
-
-def _bounded_int(value: Any, minimum: int, maximum: int, fallback: int) -> int:
-    try:
-        return max(minimum, min(maximum, int(value)))
-    except (TypeError, ValueError, OverflowError):
-        return fallback
-
-
-def save_settings(settings: dict[str, Any]) -> None:
-    path = settings_file()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-        temporary.replace(path)
-    except OSError:
-        # Settings are helpful but must never prevent the mouse from starting.
-        pass
-
-
-def _macos_app_bundle_path() -> str:
-    """Return the .app containing this process, or the executable path for source runs."""
-    executable = Path(sys.executable).resolve()
-    for parent in executable.parents:
-        if parent.suffix == ".app":
-            return str(parent)
-    return str(executable)
-
-
-class PinchClickDetector:
-    """One click per intentional pinch, with stable-frame and release gates."""
-
-    def __init__(self, sensitivity: int) -> None:
-        self.enter_ratio = sensitivity / 100.0
-        self.release_ratio = min(0.8, max(self.enter_ratio + 0.14, self.enter_ratio * 1.5))
-        self.armed = False
-        self._pinch_frames = 0
-        self._release_frames = 0
-        self._missing_frames = 0
-
-    def update(self, pinch_ratio: Optional[float]) -> Optional[str]:
-        if pinch_ratio is None:
-            self._missing_frames += 1
-            self._pinch_frames = 0
-            self._release_frames = 0
-            if self._missing_frames >= 15 and self.armed:
-                self.armed = False
-                return "disarmed"
-            return None
-
-        self._missing_frames = 0
-        if self.armed:
-            if pinch_ratio <= self.enter_ratio:
-                self._pinch_frames += 1
-                if self._pinch_frames >= 2:
-                    self.armed = False
-                    self._pinch_frames = 0
-                    self._release_frames = 0
-                    return "clicked"
-            else:
-                self._pinch_frames = 0
-            return None
-
-        if pinch_ratio >= self.release_ratio:
-            self._release_frames += 1
-            if self._release_frames >= 2:
-                self.armed = True
-                self._release_frames = 0
-                return "armed"
-        else:
-            self._release_frames = 0
-        return None
-
-
-class TrackingWorker(QThread):
-    """Owns camera and hand-tracking work so the window stays responsive."""
-
-    status_changed = Signal(str)
-    frame_ready = Signal(QImage)
-    cursor_changed = Signal(int, int)
-    gesture_action = Signal(str, int, int)
-    scroll_requested = Signal(int)
-    hide_requested = Signal()
-    gesture_changed = Signal(str)
-
-    def __init__(
-        self,
-        camera_index: int,
-        camera_view: str,
-        response: int,
-        pinch_distance: int,
-        pinch_hold_ms: int,
-        scroll_enabled: bool,
-        scroll_sensitivity: int,
-        show_landmarks: bool,
-        flip_off_enabled: bool,
-        parent: Optional[QWidget] = None,
-    ):
-        super().__init__(parent)
-        self.camera_index = camera_index
-        self.camera_view = camera_view
-        self.response = response
-        self.pinch_distance = pinch_distance
-        self.pinch_hold_ms = pinch_hold_ms
-        self.scroll_enabled = scroll_enabled
-        self.scroll_sensitivity = scroll_sensitivity
-        self.show_landmarks = show_landmarks
-        self.flip_off_enabled = flip_off_enabled
-        self._stop_requested = threading.Event()
-
-    def request_stop(self) -> None:
-        self._stop_requested.set()
-
-    @staticmethod
-    def _camera_backend() -> int:
-        if sys.platform == "darwin":
-            return cv2.CAP_AVFOUNDATION
-        if sys.platform == "win32":
-            return cv2.CAP_DSHOW
-        return cv2.CAP_V4L2
-
-    def _open_camera(self) -> tuple[Any, np.ndarray, int]:
-        indices = range(6) if self.camera_index < 0 else (self.camera_index,)
-        backend = self._camera_backend()
-        backends = (backend, cv2.CAP_ANY) if backend != cv2.CAP_ANY else (cv2.CAP_ANY,)
-        for index in indices:
-            if self._stop_requested.is_set():
-                break
-            self.status_changed.emit(f"Looking for a camera… (device {index})")
-            for api in backends:
-                try:
-                    camera = cv2.VideoCapture(index, api)
-                except cv2.error:
-                    continue
-                if not camera.isOpened():
-                    camera.release()
-                    continue
-
-                requested_width, requested_height = (
-                    (1280, 720) if self.camera_view == "wide" else (640, 480)
-                )
-                camera.set(cv2.CAP_PROP_FRAME_WIDTH, requested_width)
-                camera.set(cv2.CAP_PROP_FRAME_HEIGHT, requested_height)
-                camera.set(cv2.CAP_PROP_FPS, 30)
-                camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                okay, frame = camera.read()
-                if okay and frame is not None and frame.size:
-                    return camera, frame, index
-                camera.release()
-
-        raise RuntimeError(
-            "No working camera was found. Check camera permissions, close other "
-            "apps using it, or choose a different camera."
-        )
-
-    def _to_screen(self, x: float, y: float) -> tuple[int, int]:
-        screen_width, screen_height = pyautogui.size()
-        # Use a small edge margin so fingers at the image border still reach
-        # near the screen edge without producing out-of-range coordinates or
-        # accidentally activating PyAutoGUI's corner failsafe.
-        margin_x = 0.10
-        margin_y = 0.12
-        sx = np.interp(x, (margin_x, 1.0 - margin_x), (1, screen_width - 2))
-        sy = np.interp(y, (margin_y, 1.0 - margin_y), (1, screen_height - 2))
-        return int(np.clip(sx, 1, screen_width - 2)), int(np.clip(sy, 1, screen_height - 2))
-
-    @staticmethod
-    def _pinch_ratio(
-        thumb_tip: Any, index_tip: Any, hand_scale: float, aspect_ratio: float
-    ) -> float:
-        """Measure thumb-index gap relative to hand size, not camera distance."""
-        gap = math.hypot(
-            (thumb_tip.x - index_tip.x) * aspect_ratio,
-            thumb_tip.y - index_tip.y,
-        )
-        return gap / max(hand_scale, 1e-4)
-
-    @staticmethod
-    def _scroll_pose(landmarks: Any) -> bool:
-        """Index raised, remaining fingers folded: deliberately unlike a pinch."""
-        return (
-            landmarks[8].y < landmarks[6].y < landmarks[5].y
-            and landmarks[12].y > landmarks[10].y
-            and landmarks[16].y > landmarks[14].y
-            and landmarks[20].y > landmarks[18].y
-        )
-
-    @staticmethod
-    def _flip_off_pose(landmarks: Any) -> bool:
-        """Conservative middle-only pose; enabled only after an explicit warning."""
-        return (
-            landmarks[12].y < landmarks[10].y < landmarks[9].y
-            and landmarks[8].y > landmarks[6].y
-            and landmarks[16].y > landmarks[14].y
-            and landmarks[20].y > landmarks[18].y
-        )
-
-    def run(self) -> None:
-        camera = None
-        hand_tracker = None
-        click_detector = PinchGesture(
-            self.pinch_distance / 100.0, self.pinch_hold_ms / 1000.0
-        )
-        smoothed: Optional[tuple[float, float]] = None
-        failed_frames = 0
-        missing_hand_frames = 0
-        scroll_anchor: Optional[float] = None
-        last_scroll_time = 0.0
-        flip_frames = 0
-        try:
-            camera, first_frame, camera_index = self._open_camera()
-            if self._stop_requested.is_set():
-                return
-
-            hand_tracker = mp.solutions.hands.Hands(
-                static_image_mode=False,
-                max_num_hands=1,
-                model_complexity=1,
-                min_detection_confidence=0.60,
-                min_tracking_confidence=0.60,
-            )
-            frame_height, frame_width = first_frame.shape[:2]
-            self.status_changed.emit(
-                f"Camera {camera_index} connected at {frame_width}×{frame_height}. "
-                "Open thumb and index to arm a click."
-            )
-            frame_to_process: Optional[np.ndarray] = first_frame
-            alpha = self.response / 100.0
-            last_preview_time = 0.0
-
-            while not self._stop_requested.is_set():
-                if frame_to_process is None:
-                    okay, frame = camera.read()
-                    if not okay or frame is None or not frame.size:
-                        failed_frames += 1
-                        if failed_frames >= 75:
-                            raise RuntimeError("The camera stopped sending video. Reconnect it and try again.")
-                        time.sleep(0.02)
-                        continue
-                    failed_frames = 0
-                else:
-                    frame = frame_to_process
-                    frame_to_process = None
-
-                frame = cv2.flip(frame, 1)
-                height, width = frame.shape[:2]
-                processing_frame = frame
-                if width > 640 or height > 480:
-                    scale = min(640 / width, 480 / height)
-                    processing_frame = cv2.resize(
-                        frame,
-                        (max(1, int(width * scale)), max(1, int(height * scale))),
-                        interpolation=cv2.INTER_AREA,
-                    )
-                rgb = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2RGB)
-                try:
-                    result = hand_tracker.process(rgb)
-                except Exception as exc:
-                    logging.exception("Hand inference failed")
-                    self.status_changed.emit(f"Hand tracking recovered from an error: {exc}")
-                    continue
-                click_registered = False
-
-                if result.multi_hand_landmarks:
-                    hand = result.multi_hand_landmarks[0]
-                    landmarks = hand.landmark
-                    missing_hand_frames = 0
-                    if self.show_landmarks:
-                        mp.solutions.drawing_utils.draw_landmarks(
-                            frame, hand, mp.solutions.hands.HAND_CONNECTIONS
-                        )
-
-                    index_tip = landmarks[8]
-                    thumb_tip = landmarks[4]
-                    aspect_ratio = width / max(1, height)
-                    palm_width = math.hypot(
-                        (landmarks[5].x - landmarks[17].x) * aspect_ratio,
-                        landmarks[5].y - landmarks[17].y,
-                    )
-                    palm_length = math.hypot(
-                        (landmarks[0].x - landmarks[9].x) * aspect_ratio,
-                        landmarks[0].y - landmarks[9].y,
-                    )
-                    hand_scale = max(palm_width, palm_length * 0.55)
-                    pinch_ratio = self._pinch_ratio(
-                        thumb_tip, index_tip, hand_scale, aspect_ratio
-                    )
-                    target_x, target_y = self._to_screen(index_tip.x, index_tip.y)
-                    if smoothed is None:
-                        smoothed = (float(target_x), float(target_y))
-                    else:
-                        smoothed = (
-                            alpha * target_x + (1.0 - alpha) * smoothed[0],
-                            alpha * target_y + (1.0 - alpha) * smoothed[1],
-                        )
-                    screen_size = pyautogui.size()
-                    cursor_x = int(np.clip(smoothed[0], 2, screen_size.width - 3))
-                    cursor_y = int(np.clip(smoothed[1], 2, screen_size.height - 3))
-                    actions = click_detector.update(
-                        pinch_ratio, (cursor_x, cursor_y), time.monotonic()
-                    )
-                    for action in actions:
-                        self.gesture_action.emit(action.name, action.x or 0, action.y or 0)
-                        self.gesture_changed.emit(action.name)
-                        click_registered = click_registered or action.name == "click"
-
-                    # Freeze movement during the short-pinch decision window.  Once
-                    # dragging starts, movement resumes normally for drag-and-drop.
-                    if click_detector.state != "pending":
-                        self.cursor_changed.emit(cursor_x, cursor_y)
-
-                    scrolling = self.scroll_enabled and click_detector.state == "open" and self._scroll_pose(landmarks)
-                    if self.flip_off_enabled and click_detector.state == "open" and self._flip_off_pose(landmarks):
-                        flip_frames += 1
-                        if flip_frames >= 12:
-                            self.hide_requested.emit()
-                            self.request_stop()
-                    else:
-                        flip_frames = 0
-                    if scrolling:
-                        if scroll_anchor is None:
-                            scroll_anchor = index_tip.y
-                        delta = scroll_anchor - index_tip.y
-                        now_scroll = time.monotonic()
-                        if abs(delta) >= 0.025 and now_scroll - last_scroll_time >= 0.06:
-                            amount = int(np.clip(delta * self.scroll_sensitivity * 10, -12, 12))
-                            if amount:
-                                self.scroll_requested.emit(amount)
-                                last_scroll_time = now_scroll
-                                scroll_anchor = index_tip.y
-                    else:
-                        scroll_anchor = None
-
-                    tip_a = (int(thumb_tip.x * width), int(thumb_tip.y * height))
-                    tip_b = (int(index_tip.x * width), int(index_tip.y * height))
-                    color = (50, 220, 140) if click_registered else (255, 185, 55)
-                    cv2.line(frame, tip_a, tip_b, color, 2, cv2.LINE_AA)
-                    cv2.circle(frame, tip_a, 10, color, 2, cv2.LINE_AA)
-                    cv2.circle(frame, tip_b, 10, color, 2, cv2.LINE_AA)
-                    gesture_text = (
-                        "CLICK REGISTERED" if click_registered
-                        else "DRAGGING" if click_detector.state == "dragging"
-                        else "SCROLL MODE" if scrolling
-                        else "PINCH THUMB + INDEX" if click_detector.armed
-                        else "OPEN TO ARM CLICK"
-                    )
-                    cv2.putText(
-                        frame,
-                        gesture_text,
-                        (18, 32),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.58,
-                        color,
-                        2,
-                        cv2.LINE_AA,
-                    )
-                else:
-                    smoothed = None
-                    missing_hand_frames += 1
-                    # A few missed frames are normal.  Past this budget release any
-                    # drag so a camera fault can never leave the button held down.
-                    if missing_hand_frames >= 6:
-                        for action in click_detector.cancel(lost=True):
-                            self.gesture_action.emit(action.name, action.x or 0, action.y or 0)
-                            self.gesture_changed.emit(action.name)
-                        scroll_anchor = None
-                    cv2.putText(
-                        frame,
-                        "Show one hand to the camera",
-                        (18, 32),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.62,
-                        (245, 245, 245),
-                        2,
-                        cv2.LINE_AA,
-                    )
-
-                now = time.monotonic()
-                if now - last_preview_time >= 1 / 20:
-                    preview = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    image = QImage(
-                        preview.data,
-                        width,
-                        height,
-                        int(preview.strides[0]),
-                        QImage.Format.Format_RGB888,
-                    ).copy()
-                    self.frame_ready.emit(image)
-                    last_preview_time = now
-
-        except pyautogui.FailSafeException:
-            self.status_changed.emit("Safety stop: move the pointer away from the screen corner, then start again.")
-        except Exception as exc:
-            self.status_changed.emit(f"Tracking error: {exc}")
-        finally:
-            for action in click_detector.cancel():
-                self.gesture_action.emit(action.name, action.x or 0, action.y or 0)
-            if camera is not None:
-                camera.release()
-            if hand_tracker is not None:
-                hand_tracker.close()
-            if self._stop_requested.is_set():
-                self.status_changed.emit("Tracking stopped.")
-
-
-class CursorOverlay(QWidget):
-    """A transparent, click-through cursor halo shown over the desktop."""
+    It's a window the size of the ring that moves, not a transparent window
+    over the whole desktop that repaints: moving a small window costs next to
+    nothing, while repainting a desktop-sized translucent window every frame
+    was enough to stall the whole app on large or multiple screens.
+    """
 
     def __init__(self) -> None:
-        flags = (
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.WindowTransparentForInput
-            | Qt.WindowType.Tool
-        )
+        flags = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+                 | Qt.WindowType.WindowTransparentForInput | Qt.WindowType.Tool
+                 | Qt.WindowType.WindowDoesNotAcceptFocus)
         super().__init__(None, flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setWindowTitle("Finger Mouse cursor indicator")
-        self._cursor_position = QPoint(0, 0)
-        self._diameter = 36
-        screens = QApplication.screens()
-        if screens:
-            geometry = QRect(screens[0].geometry())
-            for screen in screens[1:]:
-                geometry = geometry.united(screen.geometry())
-            self.setGeometry(geometry)
-
-    def set_cursor_position(self, x: int, y: int) -> None:
-        self._cursor_position = QPoint(x, y) - self.geometry().topLeft()
-        if not self.isVisible():
-            self.show()
-        self.update()
+        self.setWindowTitle("Finger Mouse pointer halo")
+        self.color = QColor(34, 211, 238)
+        self.set_diameter(36)
 
     def set_diameter(self, diameter: int) -> None:
         self._diameter = diameter
+        self.setFixedSize(diameter + 8, diameter + 8)
         self.update()
 
-    def paintEvent(self, _event: Any) -> None:  # noqa: N802 - Qt event name
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        radius = self._diameter / 2
-        x, y = self._cursor_position.x(), self._cursor_position.y()
-        painter.setPen(QPen(QColor(34, 211, 238, 235), 2))
-        painter.setBrush(QColor(34, 211, 238, 48))
-        painter.drawEllipse(QPoint(x, y), int(radius), int(radius))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(34, 211, 238, 220))
-        painter.drawEllipse(QPoint(x, y), 3, 3)
+    def set_color(self, color: QColor) -> None:
+        if color != self.color:
+            self.color = color
+            self.update()
 
+    def place(self, logical: QPoint) -> None:
+        self.move(logical.x() - self.width() // 2, logical.y() - self.height() // 2)
+        if not self.isVisible():
+            self.show()
+
+    def paintEvent(self, _event: Any) -> None:  # noqa: N802 (Qt name)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        c = QColor(self.color)
+        c.setAlpha(235)
+        p.setPen(QPen(c, 2))
+        c.setAlpha(45)
+        p.setBrush(c)
+        r = self._diameter // 2
+        center = QPoint(self.width() // 2, self.height() // 2)
+        p.drawEllipse(center, r, r)
+        c.setAlpha(220)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(c)
+        p.drawEllipse(center, 3, 3)
+
+
+# ---------------------------------------------------------------------------
+# Settings dialog
+# ---------------------------------------------------------------------------
+
+class SettingsDialog(QDialog):
+    """Every setting, in tabs. Changes apply to tracking at once and are saved."""
+
+    def __init__(self, main: "MainWindow") -> None:
+        super().__init__(main)
+        self.main = main
+        self.setWindowTitle(f"{APP_NAME} settings")
+        self.setMinimumWidth(560)
+        self._loading = True
+        self.controls: dict[str, Any] = {}
+
+        tabs = QTabWidget()
+        for build, name in ((self._pointer_tab, "Pointer"), (self._click_tab, "Click && drag"),
+                            (self._scroll_tab, "Scrolling"), (self._camera_tab, "Camera"),
+                            (self._gestures_tab, "Hide gesture"), (self._advanced_tab, "Advanced")):
+            # Each page scrolls rather than squeezing its text when the window is short.
+            scroll = QScrollArea()
+            scroll.setObjectName("pageScroll")
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setWidget(build())
+            tabs.addTab(scroll, name)
+        self.resize(620, 680)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.close)
+        reset = buttons.addButton("Restore defaults", QDialogButtonBox.ButtonRole.ResetRole)
+        reset.clicked.connect(self._restore_defaults)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(tabs)
+        layout.addWidget(buttons)
+        self.load(main.settings)
+        self._loading = False
+
+    # -- building blocks ------------------------------------------------------
+    def _page(self) -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        page.setObjectName("page")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+        return page, layout
+
+    def _hint(self, layout: QVBoxLayout, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("hint")
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setOpenExternalLinks(True)
+        layout.addWidget(label)
+        return label
+
+    def _slider(self, layout: QVBoxLayout, key: str, label: str, lo: int, hi: int,
+                fmt: str = "{}", hint: str = "", step: int = 1) -> QSlider:
+        row = QHBoxLayout()
+        title = QLabel(label)
+        value = QLabel()
+        value.setObjectName("value")
+        row.addWidget(title)
+        row.addStretch(1)
+        row.addWidget(value)
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(lo, hi)
+        slider.setSingleStep(step)
+        slider.setPageStep(max(step, (hi - lo) // 10))
+        slider.setAccessibleName(label)
+        title.setBuddy(slider)
+
+        def changed(v: int) -> None:
+            value.setText(fmt.format(v))
+            self._set(key, v)
+
+        slider.valueChanged.connect(changed)
+        layout.addLayout(row)
+        layout.addWidget(slider)
+        if hint:
+            self._hint(layout, hint)
+        self.controls[key] = (slider, value, fmt)
+        return slider
+
+    def _check(self, layout: QVBoxLayout, key: str, label: str, hint: str = "") -> QCheckBox:
+        box = QCheckBox(label)
+        box.toggled.connect(lambda on: self._set(key, on))
+        layout.addWidget(box)
+        if hint:
+            self._hint(layout, hint)
+        self.controls[key] = box
+        return box
+
+    def _choice(self, layout: QVBoxLayout, key: str, label: str, options: list[tuple[str, str]],
+                hint: str = "") -> QComboBox:
+        row = QHBoxLayout()
+        title = QLabel(label)
+        combo = QComboBox()
+        for value, text in options:
+            combo.addItem(text, value)
+        combo.setAccessibleName(label)
+        title.setBuddy(combo)
+        combo.currentIndexChanged.connect(lambda _i: self._set(key, combo.currentData()))
+        row.addWidget(title)
+        row.addStretch(1)
+        row.addWidget(combo)
+        layout.addLayout(row)
+        if hint:
+            self._hint(layout, hint)
+        self.controls[key] = combo
+        return combo
+
+    # -- tabs ---------------------------------------------------------------
+    def _pointer_tab(self) -> QWidget:
+        page, l = self._page()
+        self._slider(l, "smoothing", "Smoothing", 0, 100, "{}%",
+                     "Higher holds the pointer steadier; lower follows faster. Small hand tremors are "
+                     "smoothed away more strongly than real movement.")
+        self._slider(l, "reach", "Hand reach", 50, 100, "{}% of the camera view",
+                     "How much of the camera picture your fingertip sweeps to cover the whole screen. "
+                     "Lower means less arm movement; the preview shows this area as a box.")
+        self._choice(l, "screen", "Screen", [("primary", "Main screen"), ("all", "All screens together")])
+        self._slider(l, "halo_size", "Tracking halo size", 16, 80, "{} px")
+        self._check(l, "show_halo", "Show the halo around the pointer")
+        self._check(l, "pause_on_physical_mouse", "Pause hand control while I use my mouse or trackpad",
+                    "When you move your real mouse, hand control steps aside for a moment — "
+                    "also a quick way to reach the Stop button.")
+        sys_cursor = QPushButton("System pointer size…")
+        sys_cursor.clicked.connect(self.main.open_system_cursor_settings)
+        l.addWidget(sys_cursor, 0, Qt.AlignmentFlag.AlignLeft)
+        l.addStretch(1)
+        return page
+
+    def _click_tab(self) -> QWidget:
+        page, l = self._page()
+        self._hint(l, "<b>Quick pinch</b> (thumb and index): left-click where the pinch began. "
+                      "<b>Pinch and hold</b>: press and hold the button — move to drag, open your fingers "
+                      "to drop. The pointer stays still while a click is being decided.")
+        self._check(l, "click_enabled", "Pinch to click")
+        self._slider(l, "pinch_threshold", "Pinch closes at", 10, 60, "{}% of hand size",
+                     "How close thumb and index must come. Raise it if pinches are missed; lower it if "
+                     "clicks happen before you mean them.")
+        self._slider(l, "pinch_release_gap", "Opens again at", 5, 40, "+{}%",
+                     "How much further apart they must open to let go. A wider gap ignores more wobble.")
+        self._slider(l, "click_stability", "Click steadiness", 1, 5, "{} frames",
+                     "How many camera frames must agree before a pinch or release counts.")
+        self._check(l, "drag_enabled", "Pinch and hold to drag")
+        self._slider(l, "pinch_hold_ms", "Hold for", 150, 1500, "{} ms", step=10,
+                     hint="How long to hold a pinch before it becomes a press-and-hold.")
+        l.addStretch(1)
+        return page
+
+    def _scroll_tab(self) -> QWidget:
+        page, l = self._page()
+        self._check(l, "scroll_enabled", "Scroll with a hand pose")
+        self._choice(l, "scroll_pose", "Pose",
+                     [("two_fingers", "Index and middle up (recommended)"), ("index", "Index finger only")],
+                     "Hold the pose still for a moment to start. Then move up or down: the further from "
+                     "where you started, the faster it scrolls. Lower your fingers to stop. "
+                     "“Index only” is close to how most people point, so it scrolls by accident more.")
+        self._slider(l, "scroll_sensitivity", "Speed", 5, 100, "{}%")
+        self._slider(l, "scroll_dead_zone", "Dead zone", 5, 60, "{}% of hand size",
+                     "How far to move before scrolling starts, so small wobbles don't scroll.")
+        self._check(l, "scroll_reverse", "Reverse direction")
+        l.addStretch(1)
+        return page
+
+    def _camera_tab(self) -> QWidget:
+        page, l = self._page()
+        row = QHBoxLayout()
+        title = QLabel("Camera")
+        self.camera_combo = QComboBox()
+        self.camera_combo.setAccessibleName("Camera")
+        self.camera_combo.currentIndexChanged.connect(self._camera_chosen)
+        refresh = QPushButton("Refresh")
+        refresh.clicked.connect(self.main.refresh_cameras)
+        row.addWidget(title)
+        row.addWidget(self.camera_combo, 1)
+        row.addWidget(refresh)
+        l.addLayout(row)
+
+        self.stream_row = QWidget()
+        self.stream_row.setObjectName("page")
+        sl = QVBoxLayout(self.stream_row)
+        sl.setContentsMargins(0, 0, 0, 0)
+        self.stream_url = QLineEdit()
+        self.stream_url.setPlaceholderText("http://192.168.1.20:8080/video")
+        self.stream_url.setAccessibleName("Stream address")
+        self.stream_url.editingFinished.connect(self._stream_url_done)
+        sl.addWidget(QLabel("Stream address"))
+        sl.addWidget(self.stream_url)
+        self.stream_error = QLabel()
+        self.stream_error.setObjectName("error")
+        sl.addWidget(self.stream_error)
+        self._hint(sl, "Experimental. Phone apps such as “IP Webcam” show an address like this while "
+                       "they run. Use it on a network you trust — plain http video isn't encrypted.")
+        l.addWidget(self.stream_row)
+
+        self._hint(l, "<b>Using a phone as the camera:</b> apps such as DroidCam or Iriun, and iPhone "
+                      "Continuity Camera on a Mac, add the phone to this list as a regular camera. "
+                      "Cameras marked “virtual” are software cameras; Automatic tries real ones first.")
+
+        self.camera_info = QLabel("Start tracking to see what the camera delivers.")
+        self.camera_info.setObjectName("value")
+        self.camera_info.setWordWrap(True)
+        l.addWidget(self.camera_info)
+
+        res_row = QHBoxLayout()
+        self.resolution = self._choice(l, "camera_resolution", "Resolution",
+                                       [(r, "Automatic (1280×720 if offered)" if r == "auto" else r.replace("x", "×"))
+                                        for r in app_settings.RESOLUTIONS])
+        self.detect_modes = QPushButton("Check which the camera supports")
+        self.detect_modes.clicked.connect(self._detect_modes)
+        res_row.addWidget(self.detect_modes)
+        res_row.addStretch(1)
+        l.addLayout(res_row)
+        self.modes_note = QLabel()
+        self.modes_note.setObjectName("hint")
+        self.modes_note.setWordWrap(True)
+        l.addWidget(self.modes_note)
+
+        zoom_row = QHBoxLayout()
+        self.zoom = QDoubleSpinBox()
+        self.zoom.setRange(0, 1000)
+        self.zoom.setDecimals(0)
+        self.zoom.setAccessibleName("Camera zoom")
+        self.zoom.valueChanged.connect(lambda v: None if self._loading else self._set("camera_zoom", v))
+        self.zoom_label = QLabel("Zoom")
+        zoom_row.addWidget(self.zoom_label)
+        zoom_row.addWidget(self.zoom)
+        self.driver_button = QPushButton("Camera driver settings…")
+        self.driver_button.clicked.connect(lambda: self.main.camera_command("driver_settings"))
+        zoom_row.addStretch(1)
+        zoom_row.addWidget(self.driver_button)
+        l.addLayout(zoom_row)
+        self._hint(l, "Field of view is set by the camera's lens; software can't widen it. Some cameras "
+                      "show a wider area in 16:9 modes such as 1280×720, so try those. Zoom and the driver "
+                      "settings window appear only when your camera's driver really offers them.")
+        self._check(l, "mirror", "Mirror the picture (move right, pointer goes right)")
+        l.addStretch(1)
+        return page
+
+    def _gestures_tab(self) -> QWidget:
+        page, l = self._page()
+        self._hint(l, "An optional shortcut: hold up only your middle finger for a moment to stop tracking "
+                      "and put Finger Mouse away. It's off unless you turn it on. It only affects Finger "
+                      "Mouse — it never closes or touches any other app.")
+        box = QCheckBox("Enable the hide gesture")
+        box.toggled.connect(self._hide_toggled)
+        self.controls["hide_gesture_enabled"] = box
+        l.addWidget(box)
+        self._choice(l, "hide_gesture_action", "When it's made",
+                     [("tray", "Stop tracking and hide to the tray"),
+                      ("minimize", "Stop tracking and minimise the window"),
+                      ("quit", "Stop tracking and quit Finger Mouse")])
+        self._slider(l, "hide_gesture_hold_ms", "Hold for", 600, 3000, "{} ms", step=100,
+                     hint="Longer is safer against doing it by accident.")
+        l.addStretch(1)
+        return page
+
+    def _advanced_tab(self) -> QWidget:
+        page, l = self._page()
+        self._check(l, "show_landmarks", "Show hand landmarks in the preview")
+        self._check(l, "show_gesture_state", "Show the gesture state in the preview")
+        self._check(l, "show_diagnostics", "Show diagnostics (frame rates, timings, stalls)")
+        self._check(l, "verbose_logging", "Detailed logging",
+                    "Writes more detail to the log file. Useful when reporting a problem.")
+        logs = QPushButton("Open the log folder")
+        logs.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.main.log_dir))))
+        l.addWidget(logs, 0, Qt.AlignmentFlag.AlignLeft)
+        about = QLabel(f"{APP_NAME} {APP_VERSION} · {PUBLISHER} · "
+                       f"<a href='{SOURCE_URL}'>source code</a>")
+        about.setOpenExternalLinks(True)
+        about.setObjectName("hint")
+        l.addStretch(1)
+        l.addWidget(about)
+        return page
+
+    # -- state ------------------------------------------------------------------
+    def load(self, s: Settings) -> None:
+        was = self._loading
+        self._loading = True
+        for key, control in self.controls.items():
+            value = getattr(s, key)
+            if isinstance(control, tuple):
+                slider, label, fmt = control
+                slider.setValue(int(value))
+                label.setText(fmt.format(int(value)))
+            elif isinstance(control, QCheckBox):
+                control.setChecked(bool(value))
+            elif isinstance(control, QComboBox):
+                i = control.findData(value)
+                control.setCurrentIndex(max(0, i))
+        self.stream_url.setText(s.stream_url)
+        self.populate_cameras()
+        self.update_camera_info()
+        self._loading = was
+
+    def _set(self, key: str, value: Any) -> None:
+        if self._loading:
+            return
+        self.main.change_settings(**{key: value})
+
+    def populate_cameras(self) -> None:
+        was = self._loading
+        self._loading = True
+        combo = self.camera_combo
+        combo.clear()
+        combo.addItem("Automatic", "auto")
+        for cam in self.main.cameras:
+            combo.addItem(cam.display_name, cam.id)
+        combo.addItem("Phone or network stream (experimental)…", "url")
+        i = combo.findData(self.main.settings.camera)
+        combo.setCurrentIndex(max(0, i))
+        self.stream_row.setVisible(self.main.settings.camera == "url")
+        self._loading = was
+
+    def _camera_chosen(self, _i: int) -> None:
+        value = self.camera_combo.currentData()
+        self.stream_row.setVisible(value == "url")
+        if value == "url" and not self.main.settings.stream_url:
+            self.stream_url.setFocus()
+            return   # wait for an address before switching
+        self._set("camera", value)
+
+    def _stream_url_done(self) -> None:
+        url = self.stream_url.text().strip()
+        problem = validate_stream_url(url) if url else None
+        self.stream_error.setText(problem or "")
+        if not problem and url:
+            self.main.change_settings(stream_url=url, camera="url")
+
+    def update_camera_info(self) -> None:
+        caps = self.main.capabilities
+        tracking = self.main.is_tracking()
+        self.detect_modes.setEnabled(not tracking and self.main.settings.camera.startswith("cv:"))
+        self.detect_modes.setToolTip("" if not tracking else "Stop tracking first; checking modes needs the camera.")
+        if caps is None:
+            self.camera_info.setText("Start tracking to see what the camera delivers.")
+            self.zoom.setVisible(False)
+            self.zoom_label.setText("Zoom: shown once the camera is running")
+            self.driver_button.setVisible(False)
+            return
+        fps = f" · {caps.fps:.0f} fps" if caps.fps else ""
+        notes = (" " + " ".join(caps.notes)) if caps.notes else ""
+        self.camera_info.setText(f"Now receiving {caps.width}×{caps.height}{fps} via {caps.backend}.{notes}")
+        if caps.zoom is None:
+            self.zoom.setVisible(False)
+            self.zoom_label.setText("Zoom: not offered by this camera's driver")
+        else:
+            self.zoom.setVisible(True)
+            self.zoom_label.setText("Zoom (the driver's own units)")
+            if not self.zoom.hasFocus():
+                self._loading, was = True, self._loading
+                self.zoom.setValue(caps.zoom)
+                self._loading = was
+        self.driver_button.setVisible(caps.driver_settings)
+
+    def _detect_modes(self) -> None:
+        cam_id = self.main.settings.camera
+        if not cam_id.startswith("cv:") or self.main.is_tracking():
+            return
+        index = int(cam_id[3:])
+        self.detect_modes.setEnabled(False)
+        self.modes_note.setText("Checking… the camera light may flicker.")
+        candidates = tuple(r for r in app_settings.RESOLUTIONS if r != "auto")
+        self.main.run_in_background(lambda: probe_resolutions(OpenCVCamera(index), candidates),
+                                    self._modes_found)
+
+    def _modes_found(self, modes: Any) -> None:
+        self.detect_modes.setEnabled(True)
+        if isinstance(modes, Exception) or not modes:
+            self.modes_note.setText("The camera didn't report any modes. It may be in use by another app.")
+            return
+        self.modes_note.setText("This camera delivers: " + ", ".join(m.replace("x", "×") for m in modes) +
+                                ". Other choices fall back to its nearest mode.")
+
+    def _hide_toggled(self, on: bool) -> None:
+        if self._loading:
+            return
+        if on and not self.main.settings.hide_gesture_confirmed:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("Turn on the hide gesture?")
+            box.setText("Holding up only your middle finger will stop tracking and put Finger Mouse away.")
+            box.setInformativeText(
+                "It can happen by accident if you make that shape while working. It only affects "
+                "Finger Mouse and never closes other apps. To bring Finger Mouse back, use its tray icon "
+                "or open it again. You can turn this off here at any time.")
+            enable = box.addButton("Turn it on", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            if box.clickedButton() is not enable:
+                control = self.controls["hide_gesture_enabled"]
+                control.blockSignals(True)
+                control.setChecked(False)
+                control.blockSignals(False)
+                return
+            self.main.change_settings(hide_gesture_confirmed=True, hide_gesture_enabled=True)
+            return
+        self.main.change_settings(hide_gesture_enabled=on)
+
+    def _restore_defaults(self) -> None:
+        answer = QMessageBox.question(self, "Restore defaults?",
+                                      "Put every setting back to how it was when Finger Mouse was installed?")
+        if answer == QMessageBox.StandardButton.Yes:
+            self.main.replace_settings(Settings())
+            self.load(self.main.settings)
+
+
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, log_dir: Path) -> None:
         super().__init__()
-        self.settings = load_settings()
-        self.worker: Optional[TrackingWorker] = None
-        self._system_control_error: Optional[str] = None
-        self.overlay = CursorOverlay()
-        self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
-        self.setMinimumSize(760, 790)
-        self.resize(860, 870)
-        self._build_ui()
-        self._apply_style()
-        self.cursor_size.setValue(self.settings["cursor_size"])
-        self.response.setValue(self.settings["response"])
-        self.pinch_distance.setValue(self.settings["pinch_distance"])
-        self.pinch_hold.setValue(self.settings["pinch_hold_ms"])
-        self.scroll_enabled.setChecked(self.settings["scroll_enabled"])
-        self.scroll_sensitivity.setValue(self.settings["scroll_sensitivity"])
-        self.show_landmarks.setChecked(self.settings["show_landmarks"])
-        self.flip_off_enabled.setChecked(self.settings["flip_off_enabled"])
-        self._select_camera(self.settings["camera"])
-        self._select_camera_view(self.settings["camera_view"])
-        self.overlay.set_diameter(self.settings["cursor_size"])
-        self.stop_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
-        self.stop_shortcut.activated.connect(self.stop_tracking)
+        self.log_dir = log_dir
+        self.settings = app_settings.load()
+        self.cameras: list[CameraInfo] = []
+        self.capabilities: Optional[CameraCapabilities] = None
+        self.engine: Optional[TrackingEngine] = None
+        self.output: Optional[PointerOutput] = None
+        self.settings_dialog: Optional[SettingsDialog] = None
+        self._results: "queue.Queue[tuple[Any, Any]]" = queue.Queue()
+        self._output_events: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self._preview_seq = -1
+        self._last_tick = time.monotonic()
+        self._tick_times: list[float] = []
+        self._fatal: Optional[str] = None
+        self._quitting = False
+        self._notice: Optional[tuple[str, str, float]] = None   # (chip, text, until)
 
-    def _build_ui(self) -> None:
+        self.overlay = HaloOverlay()
+        self.overlay.set_diameter(self.settings.halo_size)
+        self.watchdog = Watchdog()
+        self.watchdog.watch(Heartbeat("ui", self._ui_busy_since, 0.6, "window not responding"))
+        self.watchdog.start()
+
+        self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
+        self.setWindowIcon(app_icon())
+        self.setMinimumSize(640, 600)
+        self.resize(820, 760)
+        self._build()
+        self._apply_style()
+        self._build_tray()
+
+        self.save_timer = QTimer(self, singleShot=True, interval=400)
+        self.save_timer.timeout.connect(lambda: app_settings.save(self.settings))
+        self.tick = QTimer(self, interval=16)      # ~60 Hz: halo, preview, events
+        self.tick.timeout.connect(self._on_tick)
+        self.tick.start()
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self.stop_tracking)
+        self.refresh_cameras()
+
+    # -- layout -----------------------------------------------------------------
+    def _build(self) -> None:
         central = QWidget()
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(16)
+        layout.setContentsMargins(24, 20, 24, 18)
+        layout.setSpacing(12)
 
-        title = QLabel("Finger Mouse")
+        header = QHBoxLayout()
+        titles = QVBoxLayout()
+        title = QLabel(APP_NAME)
         title.setObjectName("title")
-        subtitle = QLabel("Move with your index finger. Pinch thumb and index to click once.")
+        subtitle = QLabel("Point with your index finger. Pinch to click, pinch and hold to drag, "
+                          "two fingers up to scroll.")
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
+        titles.addWidget(title)
+        titles.addWidget(subtitle)
+        header.addLayout(titles, 1)
+        settings_button = QPushButton("Settings")
+        settings_button.clicked.connect(self.open_settings)
+        header.addWidget(settings_button, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(header)
 
-        self.preview = QLabel("Camera preview appears here\nafter you start tracking")
+        self.preview = QLabel("The camera picture appears here once tracking starts.")
         self.preview.setObjectName("preview")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setMinimumHeight(330)
-        self.preview.setScaledContents(False)
+        self.preview.setMinimumHeight(300)
+        self.preview.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.preview.setAccessibleName("Camera preview")
         layout.addWidget(self.preview, 1)
 
-        camera_row = QHBoxLayout()
-        camera_label = QLabel("Camera")
-        self.camera = QComboBox()
-        self.camera.addItem("Automatic", -1)
-        for index in range(6):
-            self.camera.addItem(f"Camera {index}", index)
-        self.camera.currentIndexChanged.connect(self._camera_changed)
-        camera_row.addWidget(camera_label)
-        camera_row.addWidget(self.camera)
-        camera_row.addSpacing(12)
-        camera_row.addWidget(QLabel("Camera view"))
-        self.camera_view = QComboBox()
-        self.camera_view.addItem("Wide 16:9", "wide")
-        self.camera_view.addItem("Standard 4:3", "standard")
-        self.camera_view.currentIndexChanged.connect(self._camera_view_changed)
-        camera_row.addStretch(1)
-        camera_row.addWidget(self.camera_view)
-        layout.addLayout(camera_row)
-        phone_note = QLabel("Phone camera input: planned — connect through a future secure local-camera provider.")
-        phone_note.setObjectName("footnote")
-        phone_note.setWordWrap(True)
-        layout.addWidget(phone_note)
-
-        settings_card = QFrame()
-        settings_card.setObjectName("settingsCard")
-        settings_layout = QVBoxLayout(settings_card)
-        settings_layout.setContentsMargins(18, 14, 18, 14)
-        settings_layout.setSpacing(8)
-
-        cursor_row = QHBoxLayout()
-        cursor_label = QLabel("Tracking halo size")
-        self.cursor_value = QLabel()
-        self.cursor_value.setObjectName("value")
-        cursor_row.addWidget(cursor_label)
-        cursor_row.addStretch(1)
-        self.system_cursor_button = QPushButton("System cursor size…")
-        self.system_cursor_button.clicked.connect(self._open_system_cursor_settings)
-        cursor_row.addWidget(self.system_cursor_button)
-        cursor_row.addWidget(self.cursor_value)
-        self.cursor_size = QSlider(Qt.Orientation.Horizontal)
-        self.cursor_size.setRange(16, 80)
-        self.cursor_size.valueChanged.connect(self._cursor_size_changed)
-        settings_layout.addLayout(cursor_row)
-        settings_layout.addWidget(self.cursor_size)
-
-        response_row = QHBoxLayout()
-        response_label = QLabel("Movement response")
-        self.response_value = QLabel()
-        self.response_value.setObjectName("value")
-        response_row.addWidget(response_label)
-        response_row.addStretch(1)
-        response_row.addWidget(self.response_value)
-        self.response = QSlider(Qt.Orientation.Horizontal)
-        self.response.setRange(5, 50)
-        self.response.valueChanged.connect(self._response_changed)
-        settings_layout.addLayout(response_row)
-        settings_layout.addWidget(self.response)
-
-        pinch_row = QHBoxLayout()
-        pinch_label = QLabel("Pinch distance")
-        self.pinch_value = QLabel()
-        self.pinch_value.setObjectName("value")
-        pinch_row.addWidget(pinch_label)
-        pinch_row.addStretch(1)
-        pinch_row.addWidget(self.pinch_value)
-        self.pinch_distance = QSlider(Qt.Orientation.Horizontal)
-        self.pinch_distance.setRange(15, 50)
-        self.pinch_distance.valueChanged.connect(self._pinch_distance_changed)
-        settings_layout.addLayout(pinch_row)
-        settings_layout.addWidget(self.pinch_distance)
-
-        hold_row = QHBoxLayout()
-        hold_row.addWidget(QLabel("Pinch hold for drag"))
-        hold_row.addStretch(1)
-        self.pinch_hold_value = QLabel(); self.pinch_hold_value.setObjectName("value")
-        hold_row.addWidget(self.pinch_hold_value)
-        self.pinch_hold = QSlider(Qt.Orientation.Horizontal)
-        self.pinch_hold.setRange(150, 1500)
-        self.pinch_hold.valueChanged.connect(self._settings_changed)
-        settings_layout.addLayout(hold_row)
-        settings_layout.addWidget(self.pinch_hold)
-
-        scroll_row = QHBoxLayout()
-        self.scroll_enabled = QCheckBox("Enable index-finger scrolling")
-        self.scroll_enabled.toggled.connect(self._settings_changed)
-        self.scroll_value = QLabel(); self.scroll_value.setObjectName("value")
-        self.scroll_sensitivity = QSlider(Qt.Orientation.Horizontal)
-        self.scroll_sensitivity.setRange(5, 100)
-        self.scroll_sensitivity.valueChanged.connect(self._settings_changed)
-        scroll_row.addWidget(self.scroll_enabled); scroll_row.addStretch(1); scroll_row.addWidget(self.scroll_value)
-        settings_layout.addLayout(scroll_row)
-        settings_layout.addWidget(self.scroll_sensitivity)
-        self.show_landmarks = QCheckBox("Show hand landmarks (debug)")
-        self.show_landmarks.toggled.connect(self._settings_changed)
-        settings_layout.addWidget(self.show_landmarks)
-        self.flip_off_enabled = QCheckBox("Enable middle-finger hide gesture (advanced)")
-        self.flip_off_enabled.toggled.connect(self._flip_off_toggled)
-        settings_layout.addWidget(self.flip_off_enabled)
-        layout.addWidget(settings_card)
-
-        action_row = QHBoxLayout()
-        self.status = QLabel("Ready. Start tracking to move the real system pointer and click.")
+        state_row = QHBoxLayout()
+        self.chip = QLabel("Stopped")
+        self.chip.setObjectName("chip")
+        self.status = QLabel("Choose a camera and start tracking to control the pointer.")
         self.status.setObjectName("status")
         self.status.setWordWrap(True)
+        self.status.setAccessibleName("Status")
+        state_row.addWidget(self.chip, 0, Qt.AlignmentFlag.AlignTop)
+        state_row.addWidget(self.status, 1)
+        layout.addLayout(state_row)
+
+        self.diag = QLabel()
+        self.diag.setObjectName("diag")
+        self.diag.setWordWrap(True)
+        self.diag.setVisible(self.settings.show_diagnostics)
+        layout.addWidget(self.diag)
+
+        controls = QHBoxLayout()
+        camera_label = QLabel("Camera")
+        self.camera_combo = QComboBox()
+        self.camera_combo.setAccessibleName("Camera")
+        self.camera_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.camera_combo.currentIndexChanged.connect(self._quick_camera)
+        camera_label.setBuddy(self.camera_combo)
         self.start_button = QPushButton("Start tracking")
         self.start_button.setObjectName("startButton")
         self.start_button.clicked.connect(self.toggle_tracking)
-        action_row.addWidget(self.status, 1)
-        action_row.addWidget(self.start_button)
-        layout.addLayout(action_row)
+        controls.addWidget(camera_label)
+        controls.addWidget(self.camera_combo)
+        controls.addStretch(1)
+        controls.addWidget(self.start_button)
+        layout.addLayout(controls)
 
-        footnote = QLabel(
-            f"v{APP_VERSION} · Pinch once to click; open thumb and index to re-arm. "
-            "Press Esc to stop."
-        )
-        footnote.setObjectName("footnote")
-        footnote.setWordWrap(True)
-        layout.addWidget(footnote)
+        foot = QLabel("Esc stops tracking. Moving your real mouse pauses hand control for a moment.")
+        foot.setObjectName("footnote")
+        foot.setWordWrap(True)
+        layout.addWidget(foot)
         self.setCentralWidget(central)
 
     def _apply_style(self) -> None:
-        self.setStyleSheet(
-            """
-            QWidget { background: #0c1220; color: #e8edf6; font-family: Arial; font-size: 14px; }
-            QLabel#title { font-size: 30px; font-weight: 700; color: #f4f7fb; }
-            QLabel#subtitle { color: #aebbd0; font-size: 14px; }
-            QLabel#preview { background: #080d17; border: 1px solid #263248; border-radius: 12px; color: #8290a6; }
-            QFrame#settingsCard { background: #151e2e; border: 1px solid #27344a; border-radius: 12px; }
-            QFrame#settingsCard QLabel { background: transparent; }
-            QLabel#value { color: #67e8f9; font-weight: 700; }
-            QLabel#status { color: #c2ccdc; }
-            QLabel#footnote { color: #8290a6; font-size: 12px; }
-            QComboBox { background: #182338; border: 1px solid #35445c; border-radius: 7px; padding: 8px 10px; min-width: 125px; }
-            QComboBox QAbstractItemView { background: #182338; selection-background-color: #155e75; }
-            QSlider::groove:horizontal { height: 5px; background: #344259; border-radius: 2px; }
-            QSlider::sub-page:horizontal { background: #22d3ee; border-radius: 2px; }
-            QSlider::handle:horizontal { background: #ecfeff; border: 2px solid #22d3ee; width: 14px; margin: -6px 0; border-radius: 8px; }
-            QPushButton { background: #26344b; color: #e8edf6; border: 0; border-radius: 8px; padding: 11px 16px; font-weight: 700; }
-            QPushButton#startButton { background: #0891b2; color: white; min-width: 145px; }
-            QPushButton#startButton:hover { background: #06a3c7; }
-            QPushButton:disabled { background: #26344b; color: #8290a6; }
-            """
-        )
+        check = (ASSETS / "check.png").as_posix()
+        self.setStyleSheet(f"""
+            QWidget {{ background: #0c1220; color: #e8edf6; font-size: 14px; }}
+            QLabel#title {{ font-size: 28px; font-weight: 700; color: #f4f7fb; }}
+            QLabel#subtitle, QLabel#hint {{ color: #aebbd0; }}
+            QLabel#hint {{ font-size: 12px; }}
+            QLabel#preview {{ background: #080d17; border: 1px solid #263248; border-radius: 12px; color: #8290a6; }}
+            QLabel#value {{ color: #67e8f9; font-weight: 700; }}
+            QLabel#status {{ color: #d4dbe7; }}
+            QLabel#chip {{ border-radius: 10px; padding: 3px 10px; font-weight: 700; background: #1e293b; }}
+            QLabel#diag {{ color: #8fb3c9; font-family: Consolas, Menlo, monospace; font-size: 12px; }}
+            QLabel#error {{ color: #fca5a5; }}
+            QLabel#footnote {{ color: #8290a6; font-size: 12px; }}
+            QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {{ background: #182338; border: 1px solid #35445c;
+                border-radius: 7px; padding: 6px 9px; min-height: 22px; }}
+            QComboBox QAbstractItemView {{ background: #182338; selection-background-color: #155e75; }}
+            QSlider {{ min-height: 26px; }}
+            QSlider::groove:horizontal {{ height: 5px; background: #344259; border-radius: 2px; }}
+            QSlider::sub-page:horizontal {{ background: #22d3ee; border-radius: 2px; }}
+            QSlider::handle:horizontal {{ background: #ecfeff; border: 2px solid #22d3ee; width: 16px;
+                margin: -7px 0; border-radius: 9px; }}
+            QSlider:focus {{ background: #1b2a44; border-radius: 6px; }}
+            QSlider:focus::handle:horizontal {{ background: #fbbf24; }}
+            QPushButton {{ background: #26344b; color: #e8edf6; border: 2px solid transparent; border-radius: 8px;
+                padding: 9px 15px; font-weight: 700; min-height: 22px; }}
+            QPushButton:hover {{ background: #31425f; }}
+            QPushButton:focus, QComboBox:focus, QLineEdit:focus, QCheckBox:focus {{ border: 2px solid #fbbf24; }}
+            QPushButton#startButton {{ background: #0891b2; color: white; min-width: 150px; }}
+            QPushButton#startButton:hover {{ background: #06a3c7; }}
+            QPushButton:disabled {{ color: #6b7a90; }}
+            QCheckBox {{ spacing: 9px; min-height: 26px; }}
+            QCheckBox::indicator {{ width: 18px; height: 18px; border: 2px solid #5b6b85; border-radius: 5px;
+                background: #182338; }}
+            QCheckBox::indicator:checked {{ background: #0891b2; border-color: #22d3ee; image: url("{check}"); }}
+            QCheckBox::indicator:hover {{ border-color: #22d3ee; }}
+            QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+            QScrollBar::handle:vertical {{ background: #35445c; border-radius: 4px; min-height: 30px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+            QTabWidget::pane {{ border: 1px solid #27344a; border-radius: 10px; background: #111a2b; }}
+            QWidget#page, QScrollArea#pageScroll, QScrollArea#pageScroll > QWidget > QWidget {{ background: #111a2b; }}
+            QWidget#page QLabel, QWidget#page QCheckBox, QWidget#page QSlider {{ background: transparent; }}
+            QTabBar::tab {{ background: #182338; padding: 8px 14px; margin-right: 3px; border-top-left-radius: 7px;
+                border-top-right-radius: 7px; color: #aebbd0; }}
+            QTabBar::tab:selected {{ background: #111a2b; color: #f4f7fb; font-weight: 700; }}
+            QTabBar::tab:focus {{ color: #fbbf24; }}
+        """)
 
-    def _select_camera(self, camera_index: int) -> None:
-        for index in range(self.camera.count()):
-            if self.camera.itemData(index) == camera_index:
-                self.camera.setCurrentIndex(index)
-                return
-        self.camera.setCurrentIndex(0)
+    def _build_tray(self) -> None:
+        self.tray: Optional[QSystemTrayIcon] = None
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        tray = QSystemTrayIcon(app_icon(), self)
+        tray.setToolTip(APP_NAME)
+        menu = QMenu()
+        show = QAction("Show Finger Mouse", self, triggered=self.show_window)
+        self.tray_toggle = QAction("Start tracking", self, triggered=self.toggle_tracking)
+        quit_action = QAction("Quit", self, triggered=self.quit)
+        menu.addAction(show)
+        menu.addAction(self.tray_toggle)
+        menu.addSeparator()
+        menu.addAction(quit_action)
+        tray.setContextMenu(menu)
+        tray.activated.connect(lambda reason: self.show_window()
+                               if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
+        tray.show()
+        self.tray = tray
+        self._tray_menu = menu
 
-    def _select_camera_view(self, camera_view: str) -> None:
-        for index in range(self.camera_view.count()):
-            if self.camera_view.itemData(index) == camera_view:
-                self.camera_view.setCurrentIndex(index)
-                return
-        self.camera_view.setCurrentIndex(0)
+    # -- settings ---------------------------------------------------------------
+    def change_settings(self, **changes: Any) -> None:
+        self.replace_settings(self.settings.copy(**changes))
 
-    def _persist_settings(self) -> None:
-        save_settings(
-            {
-                "camera": int(self.camera.currentData()),
-                "camera_view": str(self.camera_view.currentData()),
-                "response": self.response.value(),
-                "cursor_size": self.cursor_size.value(),
-                "pinch_distance": self.pinch_distance.value(),
-                "pinch_hold_ms": self.pinch_hold.value(),
-                "scroll_enabled": self.scroll_enabled.isChecked(),
-                "scroll_sensitivity": self.scroll_sensitivity.value(),
-                "show_landmarks": self.show_landmarks.isChecked(),
-                "flip_off_enabled": self.flip_off_enabled.isChecked(),
-            }
-        )
+    def replace_settings(self, new: Settings) -> None:
+        old = self.settings
+        self.settings = new
+        self.save_timer.start()
+        self.overlay.set_diameter(new.halo_size)
+        self.diag.setVisible(new.show_diagnostics)
+        if new.verbose_logging != old.verbose_logging:
+            logging.getLogger().setLevel(logging.DEBUG if new.verbose_logging else logging.INFO)
+        if new.camera != old.camera:
+            self._select_quick_camera()
+        if self.engine is not None:
+            self.engine.update_settings(new)
+            if new.camera != old.camera or new.camera_resolution != old.camera_resolution:
+                self.capabilities = None
+        if self.output is not None:
+            self.output.pause_on_physical_mouse = new.pause_on_physical_mouse
 
-    def _camera_changed(self, _index: int) -> None:
-        self._persist_settings()
+    def open_settings(self) -> None:
+        if self.settings_dialog is None:
+            self.settings_dialog = SettingsDialog(self)
+        else:
+            self.settings_dialog.load(self.settings)
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
 
-    def _camera_view_changed(self, _index: int) -> None:
-        self._persist_settings()
+    # -- cameras ----------------------------------------------------------------
+    def refresh_cameras(self) -> None:
+        tracking = self.is_tracking()
 
-    def _cursor_size_changed(self, value: int) -> None:
-        self.cursor_value.setText(f"{value} px")
-        self.overlay.set_diameter(value)
-        self._persist_settings()
+        def work() -> list[CameraInfo]:
+            cams = list_cameras()
+            if not cams and not tracking:
+                cams = probe_camera_indices()   # the OS couldn't name them: try them
+            return cams
 
-    def _response_changed(self, value: int) -> None:
-        self.response_value.setText(f"{value}%")
-        self._persist_settings()
-        if self.worker is not None and self.worker.isRunning():
-            self.status.setText("Response changes apply the next time tracking starts.")
+        self.run_in_background(work, self._cameras_found)
 
-    def _pinch_distance_changed(self, value: int) -> None:
-        self.pinch_value.setText(f"{value}% of hand size")
-        self._persist_settings()
-        if self.worker is not None and self.worker.isRunning():
-            self.status.setText("Pinch distance changes apply the next time tracking starts.")
+    def _cameras_found(self, cams: Any) -> None:
+        if isinstance(cams, Exception):
+            log.warning("Camera listing failed: %s", cams)
+            cams = []
+        self.cameras = cams
+        self._select_quick_camera()
+        if self.settings_dialog is not None:
+            self.settings_dialog.populate_cameras()
 
-    def _settings_changed(self, _value: Any = None) -> None:
-        self.pinch_hold_value.setText(f"{self.pinch_hold.value()} ms")
-        self.scroll_value.setText(f"{self.scroll_sensitivity.value()}%")
-        self._persist_settings()
-        if self.worker is not None and self.worker.isRunning():
-            self.status.setText("Gesture settings apply the next time tracking starts.")
+    def _select_quick_camera(self) -> None:
+        combo = self.camera_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Automatic", "auto")
+        for cam in self.cameras:
+            combo.addItem(cam.display_name, cam.id)
+        if self.settings.stream_url:
+            combo.addItem("Phone or network stream", "url")
+        i = combo.findData(self.settings.camera)
+        if i < 0 and self.settings.camera.startswith("cv:"):
+            combo.addItem(f"Camera {self.settings.camera[3:]} (not found)", self.settings.camera)
+            i = combo.count() - 1
+        combo.setCurrentIndex(max(0, i))
+        combo.blockSignals(False)
 
-    def _flip_off_toggled(self, enabled: bool) -> None:
-        if enabled:
-            answer = QMessageBox.question(
-                self, "Enable hide gesture?",
-                "A sustained middle-finger pose will stop tracking and hide Finger Mouse. "
-                "It never closes other applications. Enable it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                self.flip_off_enabled.blockSignals(True)
-                self.flip_off_enabled.setChecked(False)
-                self.flip_off_enabled.blockSignals(False)
-        self._persist_settings()
+    def _quick_camera(self, _i: int) -> None:
+        value = self.camera_combo.currentData()
+        if value and value != self.settings.camera:
+            self.change_settings(camera=value)
+            if self.settings_dialog is not None:
+                self.settings_dialog.populate_cameras()
+
+    def camera_command(self, command: str, value: Any = None) -> None:
+        if self.engine is not None:
+            self.engine.camera_command(command, value)
+
+    def run_in_background(self, work, done) -> None:
+        """Run ``work`` on a worker thread; ``done(result)`` runs later on this thread."""
+        def target() -> None:
+            try:
+                result = work()
+            except Exception as exc:
+                log.exception("Background task failed")
+                result = exc
+            self._results.put((done, result))
+        threading.Thread(target=target, daemon=True, name="background").start()
+
+    # -- tracking ---------------------------------------------------------------
+    def is_tracking(self) -> bool:
+        return self.engine is not None
 
     def toggle_tracking(self) -> None:
-        if self.worker is not None and self.worker.isRunning():
+        if self.engine is not None:
             self.stop_tracking()
         else:
             self.start_tracking()
 
     def start_tracking(self) -> None:
-        if self.worker is not None and self.worker.isRunning():
+        if self.engine is not None:
             return
         if not self._request_mouse_control_access():
             return
-        self._system_control_error = None
-        self._persist_settings()
-        self.preview.setText("Starting camera…")
+        self._fatal = None
+        try:
+            backend = create_backend()
+        except Exception as exc:
+            self._set_status("stopped", f"Finger Mouse can't control the pointer here: {exc}")
+            return
+        log.info("Starting tracking: camera=%s backend=%s", self.settings.camera, backend.name)
+        self.output = PointerOutput(backend, on_event=lambda kind, msg: self._output_events.put((kind, msg)),
+                                    pause_on_physical_mouse=self.settings.pause_on_physical_mouse)
+        self.output.start()
+        self.engine = TrackingEngine(self.settings, self.output, self.cameras)
+        self.engine.preview_width = self.preview.width()
+        engine, output = self.engine, self.output
+        self.watchdog.watch(Heartbeat("camera", lambda: engine.grabber.read_started if engine.grabber else None,
+                                      1.5, "camera read blocked"))
+        self.watchdog.watch(Heartbeat("inference", lambda: engine.infer_started, 1.0, "hand tracking inference"))
+        self.watchdog.watch(Heartbeat("output", lambda: output.busy_since, 0.5, "pointer output call"))
+        self.engine.start()
         self.start_button.setText("Stop tracking")
-        self.status.setText("Starting hand tracking…")
-        self.camera.setEnabled(False)
-        self.camera_view.setEnabled(False)
+        if self.tray:
+            self.tray_toggle.setText("Stop tracking")
+        self._set_status("starting", "Starting the camera…")
+        if sys.platform.startswith("linux") and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+            self._set_status("starting", "Wayland desktops usually block apps from moving the pointer. If nothing "
+                                         "moves, log in with an X11 session (e.g. “Ubuntu on Xorg”).")
+
+    def stop_tracking(self) -> None:
+        if self.engine is not None:
+            self.engine.stop()          # finishes within a frame or two; see _on_tick
+            self._set_status("stopped", "Stopping…")
+        if self.output is not None:
+            self.output.release_all()   # let go now, not when the engine gets round to it
+
+    def _engine_finished(self) -> None:
+        for name in ("camera", "inference", "output"):
+            self.watchdog.unwatch(name)
+        if self.output is not None:
+            self.output.stop()
+        self.engine = None
+        self.output = None
+        self.capabilities = None
         self.overlay.hide()
-        self.worker = TrackingWorker(
-            int(self.camera.currentData()),
-            str(self.camera_view.currentData()),
-            self.response.value(),
-            self.pinch_distance.value(),
-            self.pinch_hold.value(),
-            self.scroll_enabled.isChecked(),
-            self.scroll_sensitivity.value(),
-            self.show_landmarks.isChecked(),
-            self.flip_off_enabled.isChecked(),
-            self,
-        )
-        self.worker.status_changed.connect(self.status.setText)
-        self.worker.frame_ready.connect(self._show_frame)
-        self.worker.cursor_changed.connect(self._move_system_pointer)
-        self.worker.cursor_changed.connect(self.overlay.set_cursor_position)
-        self.worker.gesture_action.connect(self._handle_gesture_action)
-        self.worker.scroll_requested.connect(self._scroll_system_pointer)
-        self.worker.hide_requested.connect(self._hide_from_gesture)
-        self.worker.gesture_changed.connect(self._gesture_status)
-        self.worker.finished.connect(self._worker_finished)
-        self.worker.start()
+        self.start_button.setText("Start tracking")
+        if self.tray:
+            self.tray_toggle.setText("Start tracking")
+        self._set_status("stopped", self._fatal or "Stopped. Start tracking to control the pointer again.")
+        self.preview.setPixmap(QPixmap())
+        self.preview.setText("The camera picture appears here once tracking starts.")
+        if self.settings_dialog is not None:
+            self.settings_dialog.update_camera_info()
+        if self._quitting:
+            QApplication.quit()
+
+    # -- the 60 Hz tick: everything the window shows ---------------------------
+    def _ui_busy_since(self) -> Optional[float]:
+        if not self.isVisible() or self.isMinimized():
+            return None     # the OS may throttle a hidden window's timers; that's not a freeze
+        now = time.monotonic()
+        return self._last_tick if now - self._last_tick > 0.1 else None
+
+    def _on_tick(self) -> None:
+        now = time.monotonic()
+        self._last_tick = now
+        self._tick_times = [t for t in self._tick_times if t > now - 2] + [now]
+
+        while not self._results.empty():
+            done, result = self._results.get_nowait()
+            done(result)
+        while not self._output_events.empty():
+            kind, message = self._output_events.get_nowait()
+            self._on_output_event(kind, message)
+
+        engine = self.engine
+        if engine is None:
+            return
+        while not engine.events.empty():
+            kind, payload = engine.events.get_nowait()
+            self._on_engine_event(kind, payload)
+        if self.engine is None:
+            return
+        if not engine.is_alive():
+            self._engine_finished()
+            return
+
+        view = engine.view
+        engine.preview_width = self.preview.width()
+        if view.preview is not None and view.preview_seq != self._preview_seq:
+            self._preview_seq = view.preview_seq
+            h, w = view.preview.shape[:2]
+            image = QImage(view.preview.data, w, h, int(view.preview.strides[0]), QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(image)
+            if pixmap.width() > self.preview.width() or pixmap.height() > self.preview.height():
+                pixmap = pixmap.scaled(self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                                       Qt.TransformationMode.FastTransformation)
+            self.preview.setPixmap(pixmap)
+
+        if (view.cursor and view.hand and self.settings.show_halo and view.gesture not in ("paused", "no_hand")):
+            self.overlay.set_color(QColor(GESTURE_COLORS.get(view.gesture, "#22d3ee")))
+            self.overlay.place(native_to_logical(*view.cursor))
+        elif self.overlay.isVisible():
+            self.overlay.hide()
+
+        if view.camera_state == "connected" and isinstance(view.camera_detail, CameraCapabilities):
+            if self.capabilities is not view.camera_detail:
+                self.capabilities = view.camera_detail
+                if self.settings_dialog is not None:
+                    self.settings_dialog.update_camera_info()
+        if self._notice and now < self._notice[2]:
+            self._set_status(self._notice[0], self._notice[1])
+        else:
+            self._notice = None
+            self._set_status(view.gesture if view.camera_state == "connected" else "starting", view.label)
+
+        if self.settings.show_diagnostics:
+            d = view.diagnostics
+            ui_fps = (len(self._tick_times) - 1) / max(self._tick_times[-1] - self._tick_times[0], 1e-3)
+            stall = self.watchdog.current
+            self.diag.setText(
+                f"camera {d.get('camera_fps', 0)} fps · frame age {d.get('frame_age_ms')} ms · "
+                f"skipped {d.get('dropped', 0)} · inference {d.get('inference_ms')} ms · "
+                f"tracking {d.get('tracking_fps')} fps · stale {d.get('stale', 0)} · "
+                f"window {ui_fps:.0f} fps · pointer queue {d.get('output_queue', 0)}"
+                + (f"\n⚠ stalled: {stall}" if stall else ""))
+
+    def _on_engine_event(self, kind: str, payload: Any) -> None:
+        if kind == "fatal":
+            self._fatal = str(payload)
+            log.error("Tracking stopped: %s", payload)
+            self.stop_tracking()
+        elif kind == "hide_requested":
+            self._hide_from_gesture(str(payload))
+        elif kind == "camera" and payload and payload[0] == "error":
+            self._show_notice("starting", str(payload[1]))
+
+    def _on_output_event(self, kind: str, message: str) -> None:
+        if kind == "refused":
+            self._fatal = message
+            self.stop_tracking()
+            QMessageBox.warning(self, "Pointer control blocked", message)
+        elif kind == "error":
+            self._show_notice("paused", f"The system refused a pointer action: {message}")
+        elif kind == "override":
+            self._show_notice("paused", message, 1.5)
+
+    def _show_notice(self, chip: str, text: str, seconds: float = 4.0) -> None:
+        """A message that stays up for a few seconds over the live gesture text."""
+        self._notice = (chip, text, time.monotonic() + seconds)
+        self._set_status(chip, text)
+
+    def _set_status(self, gesture: str, text: str) -> None:
+        names = {"ready": "Ready", "pinched": "Pinch", "dragging": "Dragging", "scrolling": "Scrolling",
+                 "paused": "Paused", "hide": "Hide", "no_hand": "No hand", "open": "Tracking",
+                 "pointing": "Tracking", "starting": "Starting", "stopped": "Stopped"}
+        chip = names.get(gesture, "Tracking")
+        if self.chip.text() != chip:
+            self.chip.setText(chip)
+            color = GESTURE_COLORS.get(gesture, "#8290a6")
+            self.chip.setStyleSheet(f"color: {color}; border: 1px solid {color};")
+        if self.status.text() != text:
+            self.status.setText(text)
+
+    # -- hide gesture, tray, quit -------------------------------------------------
+    def _hide_from_gesture(self, action: str) -> None:
+        log.info("Hide gesture: %s", action)
+        self.stop_tracking()
+        if action == "quit":
+            self.quit()
+        elif action == "tray" and self.tray is not None:
+            self.hide()
+            self.tray.showMessage(APP_NAME, "Finger Mouse is hidden and tracking is stopped. "
+                                  "Click the tray icon to bring it back.", app_icon(), 4000)
+        else:
+            self.showMinimized()
+
+    def show_window(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def quit(self) -> None:
+        self._quitting = True
+        self.close()
+
+    def closeEvent(self, event: Any) -> None:  # noqa: N802 (Qt name)
+        if self.engine is not None:
+            self.stop_tracking()
+            self.engine.join(2.0)      # the loop checks for stop every 0.2 s
+            self._engine_finished()
+        if self.output is not None:
+            self.output.stop()
+        app_settings.save(self.settings)
+        self.watchdog.stop()
+        self.overlay.close()
+        if self.tray:
+            self.tray.hide()
+        event.accept()
+        QApplication.quit()
+
+    # -- platform helpers ---------------------------------------------------------
+    def open_system_cursor_settings(self) -> None:
+        """The operating system's own pointer-size setting (the halo is only Finger Mouse's)."""
+        if sys.platform == "win32":
+            QDesktopServices.openUrl(QUrl("ms-settings:easeofaccess-mousepointer"))
+        elif sys.platform == "darwin":
+            QDesktopServices.openUrl(QUrl("x-apple.systempreferences:com.apple.Accessibility-Settings.extension?Display"))
+            QMessageBox.information(self, "System pointer size",
+                                    "In System Settings, open Accessibility → Display → Pointer size.")
+        else:
+            QMessageBox.information(self, "System pointer size",
+                                    "Open your desktop's Accessibility settings and change the pointer size there.")
 
     def _request_mouse_control_access(self) -> bool:
-        """Check both macOS accessibility trust and permission to post events."""
+        """macOS needs Accessibility permission (and permission to post events)."""
         if sys.platform != "darwin":
             return True
-
-        accessibility_trusted = False
-        post_event_allowed = False
+        trusted = posting = False
         try:
             import Quartz
-            from ApplicationServices import (
-                AXIsProcessTrustedWithOptions,
-                kAXTrustedCheckOptionPrompt,
-            )
+            from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
 
             preflight = getattr(Quartz, "CGPreflightPostEventAccess", None)
             request = getattr(Quartz, "CGRequestPostEventAccess", None)
             if preflight is None or request is None:
-                raise RuntimeError("Core Graphics mouse-control permission checks are unavailable.")
-
-            accessibility_trusted = bool(
-                AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: False})
-            )
-            post_event_allowed = bool(preflight())
-            if not post_event_allowed:
+                raise RuntimeError("Core Graphics permission checks are unavailable.")
+            posting = bool(preflight())
+            if not posting:
                 request()
-            post_event_allowed = bool(preflight())
-            accessibility_trusted = bool(
-                AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: False})
-            )
-            if post_event_allowed and accessibility_trusted:
+                posting = bool(preflight())
+            trusted = bool(AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: False}))
+            if posting and trusted:
                 return True
         except Exception as exc:
-            self.status.setText(f"Could not check macOS mouse permissions: {exc}")
+            self._set_status("stopped", f"Couldn't check macOS permissions: {exc}")
             return False
-
-        app_path = _macos_app_bundle_path()
-        state = (
-            f"Accessibility: {'allowed' if accessibility_trusted else 'not allowed'}; "
-            f"system event posting: {'allowed' if post_event_allowed else 'not allowed'}."
-        )
-        self.status.setText("Allow Finger Mouse under Privacy & Security → Accessibility, then reopen it.")
-        QDesktopServices.openUrl(
-            QUrl("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-        )
+        executable = Path(sys.executable).resolve()
+        app_path = next((str(p) for p in executable.parents if p.suffix == ".app"), str(executable))
+        QDesktopServices.openUrl(QUrl("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"))
         QMessageBox.warning(
-            self,
-            "Allow system mouse control",
-            "macOS has not granted the running copy permission to control the pointer. "
-            f"{state}\n\n"
+            self, "Allow Finger Mouse to control the pointer",
+            f"macOS hasn't allowed this copy to control the pointer yet (Accessibility: "
+            f"{'allowed' if trusted else 'not allowed'}; posting events: {'allowed' if posting else 'not allowed'}).\n\n"
             f"Running app: {app_path}\n\n"
-            "Quit Finger Mouse. In System Settings → Privacy & Security → Accessibility, "
-            "remove any old Finger Mouse entry, add and enable the exact app copy shown "
-            "above, then quit and reopen that same copy. Keep it in Applications after "
-            "granting permission; macOS treats different app copies as different apps.",
-        )
+            "Quit Finger Mouse. In System Settings → Privacy & Security → Accessibility, remove any old "
+            "Finger Mouse entry, add and turn on this exact copy, then open it again. Keep it in "
+            "Applications: macOS treats a moved or updated copy as a different app.")
+        self._set_status("stopped", "Allow Finger Mouse under Privacy & Security → Accessibility, then reopen it.")
         return False
 
-    def stop_tracking(self) -> None:
-        self._release_system_pointer()
-        if self.worker is not None and self.worker.isRunning():
-            self.status.setText("Stopping tracking…")
-            self.worker.request_stop()
 
-    def _worker_finished(self) -> None:
-        self._release_system_pointer()
-        self.overlay.hide()
-        self.start_button.setText("Start tracking")
-        self.camera.setEnabled(True)
-        self.camera_view.setEnabled(True)
-        if self._system_control_error:
-            self.status.setText(self._system_control_error)
-        if self.worker is not None:
-            self.worker.deleteLater()
-        self.worker = None
+# ---------------------------------------------------------------------------
+# Self-test and entry point
+# ---------------------------------------------------------------------------
 
-    def _gesture_status(self, state: str) -> None:
-        if self._system_control_error:
-            return
-        if state == "armed":
-            self.status.setText("Click armed. Pinch thumb and index for one left-click.")
-        elif state == "click":
-            self.status.setText("Pinch click registered. Open fingers to re-arm.")
-        elif state == "pinch_started":
-            self.status.setText("Pinch locked. Release to click, or hold to drag.")
-        elif state == "mouse_down":
-            self.status.setText("Dragging. Release your pinch to drop.")
-        elif state == "mouse_up":
-            self.status.setText("Drop complete. Open fingers to re-arm.")
-        elif state == "disarmed":
-            self.status.setText("Hand lost. Show an open hand to arm clicking again.")
+def self_test(out_path: Optional[str]) -> int:
+    """Check an installed copy works, without a camera or a window."""
+    results: dict[str, Any] = {"app": APP_NAME, "version": APP_VERSION, "platform": sys.platform,
+                               "python": sys.version.split()[0], "checks": {}}
+    ok = True
 
-    def _move_system_pointer(self, x: int, y: int) -> None:
-        """Move the OS cursor on Qt's GUI thread, then verify the real position."""
-        if self.worker is None or not self.worker.isRunning():
-            return
+    def check(name: str, fn) -> None:
+        nonlocal ok
         try:
-            QCursor.setPos(x, y)
-            actual = pyautogui.position()
-            if abs(actual.x - x) > 3 or abs(actual.y - y) > 3:
-                # Some desktop backends ignore Qt cursor warps. Try the native
-                # PyAutoGUI backend once from the GUI thread, then fail visibly.
-                pyautogui.moveTo(x, y, duration=0)
-                actual = pyautogui.position()
-            if abs(actual.x - x) > 3 or abs(actual.y - y) > 3:
-                self._report_system_control_error(
-                    "The desktop did not move its system pointer. Check mouse-control "
-                    "permissions or switch Linux to an X11 session."
-                )
-        except pyautogui.FailSafeException:
-            self._report_system_control_error(
-                "Safety stop: move the pointer away from the top-left corner, then start again."
-            )
-        except Exception as exc:
-            self._report_system_control_error(f"System pointer error: {exc}")
+            results["checks"][name] = {"ok": True, "detail": fn()}
+        except Exception as exc:  # noqa: BLE001 - report every failure
+            ok = False
+            results["checks"][name] = {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
 
-    def _handle_gesture_action(self, action: str, x: int, y: int) -> None:
-        """Apply state-machine actions on the GUI thread, including locked clicks."""
-        try:
-            if action == "click":
-                QCursor.setPos(x, y)
-                pyautogui.click(x=x, y=y)
-            elif action == "mouse_down":
-                QCursor.setPos(x, y)
-                pyautogui.mouseDown(x=x, y=y)
-            elif action == "mouse_up":
-                pyautogui.mouseUp()
-        except pyautogui.FailSafeException:
-            self._report_system_control_error(
-                "Safety stop: move the pointer away from the top-left corner, then start again."
-            )
-        except Exception as exc:
-            self._report_system_control_error(f"System gesture error: {exc}")
+    def hand_model() -> str:
+        from hand_tracker import HandTracker
+        tracker = HandTracker()
+        started = time.perf_counter()
+        tracker.process(np.zeros((360, 640, 3), np.uint8))
+        ms = (time.perf_counter() - started) * 1000
+        kind = tracker.kind
+        tracker.close()
+        return f"{kind}, first frame {ms:.0f} ms"
 
-    def _release_system_pointer(self) -> None:
-        """Best-effort cleanup for stop, loss, worker failure, and window close."""
-        try:
-            pyautogui.mouseUp()
-        except Exception:
-            logging.exception("Unable to release system mouse button")
+    def pointer() -> str:
+        backend = create_backend()
+        return f"{backend.name}, desktop {backend.desktop_rect('primary')}"
 
-    def _hide_from_gesture(self) -> None:
-        self.stop_tracking()
-        self.hide()
+    def qt() -> str:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([sys.argv[0]])
+        return f"Qt platform {app.platformName()}"
 
-    def _scroll_system_pointer(self, amount: int) -> None:
-        try:
-            pyautogui.scroll(amount)
-        except Exception as exc:
-            self._report_system_control_error(f"System scroll error: {exc}")
-
-    def _report_system_control_error(self, message: str) -> None:
-        self._system_control_error = message
-        self.status.setText(message)
-        if self.worker is not None:
-            self.worker.request_stop()
-
-    def _open_system_cursor_settings(self) -> None:
-        """Open native accessibility settings for the actual OS cursor."""
-        if sys.platform == "win32":
-            QDesktopServices.openUrl(QUrl("ms-settings:easeofaccess-mousepointer"))
-        elif sys.platform == "darwin":
-            import subprocess
-
-            try:
-                subprocess.Popen(["open", "-b", "com.apple.systempreferences"])
-                QMessageBox.information(
-                    self,
-                    "System cursor size",
-                    "In System Settings, open Accessibility → Display → Pointer size. "
-                    "That setting changes the real system cursor. The Tracking halo size "
-                    "slider only changes Finger Mouse’s visual tracking indicator.",
-                )
-            except OSError as exc:
-                QMessageBox.warning(self, "System Settings", str(exc))
-        else:
-            QMessageBox.information(
-                self,
-                "System cursor size",
-                "Open your desktop environment’s Accessibility settings and adjust the "
-                "mouse pointer size. The Tracking halo size slider changes only Finger "
-                "Mouse’s visual tracking indicator.",
-            )
-
-    def _show_frame(self, image: QImage) -> None:
-        pixmap = QPixmap.fromImage(image).scaled(
-            self.preview.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self.preview.setPixmap(pixmap)
-
-    def resizeEvent(self, event: Any) -> None:  # noqa: N802 - Qt event name
-        super().resizeEvent(event)
-        if self.worker is not None and self.worker.isRunning():
-            # Re-scale the latest preview when the window size changes.
-            pixmap = self.preview.pixmap()
-            if pixmap is not None:
-                self.preview.setPixmap(
-                    pixmap.scaled(
-                        self.preview.size(),
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                )
-
-    def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt event name
-        if self.worker is not None and self.worker.isRunning():
-            self.worker.request_stop()
-            if not self.worker.wait(3000):
-                self.status.setText("The camera is still shutting down. Try closing again in a moment.")
-                event.ignore()
-                return
-        self.overlay.close()
-        event.accept()
+    check("hand_model", hand_model)
+    check("qt", qt)
+    check("pointer_backend", pointer)
+    check("camera_listing", lambda: [c.label for c in list_cameras()])
+    check("settings", lambda: str(app_settings.settings_path()))
+    results["ok"] = ok
+    text = json.dumps(results, indent=2)
+    if out_path:
+        Path(out_path).write_text(text, encoding="utf-8")
+    elif sys.stdout:
+        print(text)
+    return 0 if ok else 1
 
 
 def main() -> int:
+    args = sys.argv[1:]
+    if args and args[0] == "--self-test":
+        return self_test(args[1] if len(args) > 1 else None)
+
+    log_dir = app_settings.config_dir() / "logs"
+    try:
+        setup_logging(log_dir, app_settings.load().verbose_logging)
+    except OSError:
+        pass
+    log.info("%s %s starting on %s", APP_NAME, APP_VERSION, sys.platform)
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
-    app.setOrganizationName("Finger Mouse")
-    window = MainWindow()
+    app.setOrganizationName(PUBLISHER)
+    app.setWindowIcon(app_icon())
+    app.setQuitOnLastWindowClosed(False)   # hiding to the tray must not quit
+    window = MainWindow(log_dir)
     window.show()
     return app.exec()
 
