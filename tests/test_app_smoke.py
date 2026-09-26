@@ -107,7 +107,7 @@ def test_app_tracks_a_hand_from_a_network_stream(stream_url, tmp_path, monkeypat
     window.change_settings(camera="url", stream_url=stream_url, show_diagnostics=True)
     window.start_tracking()
     try:
-        assert pump(app, 30, lambda: window.engine and window.engine.view.hand), \
+        assert pump(app, 30, lambda: window.engine and window.engine.view.tracked), \
             f"no hand seen: {window.status.text()}"
         assert pump(app, 5, lambda: any(c[0] == "move" for c in recorder.calls)), "pointer never moved"
         assert window.capabilities is not None and window.capabilities.width == 640

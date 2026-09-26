@@ -63,3 +63,28 @@ def test_copy_validates_changes():
     s = st.Settings().copy(pinch_threshold=5, scroll_pose="two_fingers")
     assert s.pinch_threshold == 10
     assert s.release_threshold == 10 + s.pinch_release_gap
+
+
+def test_eye_tracking_defaults_and_bad_choices():
+    s = st.Settings()
+    assert s.tracking_mode == "hand" and s.eye_click_mode == "dwell" and s.eye_calibration == ""
+    s = st.validate({"tracking_mode": "gaze", "eye_click_mode": "wink", "eye_dwell_ms": 99999})
+    assert s.tracking_mode == "hand"          # not a real mode: falls back
+    assert s.eye_click_mode == "dwell"
+    assert s.eye_dwell_ms == 2500             # clamped to the max
+
+
+def test_eye_calibration_json_round_trips_through_settings():
+    from gesture_state import GazeCalibration
+
+    cal = GazeCalibration()
+    cal.fit([((x, y), (0.5 + 0.3 * x, 0.5 + 0.3 * y)) for x in (-0.5, 0, 0.5) for y in (-0.5, 0, 0.5)])
+    payload = cal.to_json()
+    s = st.validate({"eye_calibration": payload})
+    assert s.eye_calibration == payload
+    assert GazeCalibration.from_json(s.eye_calibration).is_calibrated
+
+
+def test_junk_eye_calibration_is_dropped_not_stored():
+    s = st.validate({"eye_calibration": "not a real calibration"})
+    assert s.eye_calibration == ""

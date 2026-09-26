@@ -4,7 +4,8 @@ import math
 
 import pytest
 
-from gesture_state import HeldPose, OneEuroFilter, PinchGesture, PointerFilter, PointerStabilizer, ScrollGesture
+from gesture_state import DwellClick, GazeCalibration, HeldPose, OneEuroFilter, PinchGesture, PointerFilter, \
+    PointerStabilizer, ScrollGesture
 
 DT = 1 / 30
 OPEN, CLOSED, BETWEEN = 0.7, 0.2, 0.36   # threshold 0.30, release 0.44
@@ -312,3 +313,138 @@ def test_held_pose_short_holds_never_fire():
         for _ in range(5):                     # …then let go
             t += DT
             h.update(False, t)
+
+
+# ---------------------------------------------------------------------------
+# Eye tracking: calibration and dwell-to-click
+# ---------------------------------------------------------------------------
+
+def test_gaze_calibration_needs_at_least_six_points():
+    cal = GazeCalibration()
+    samples = [((-0.5, -0.5), (0.1, 0.1))] * 5
+    assert cal.fit(samples) is False
+    assert not cal.is_calibrated
+    assert cal.apply((0, 0)) is None
+
+
+def test_gaze_calibration_fits_a_grid_and_interpolates_between_points():
+    def true_screen(offset):
+        x, y = offset
+        return (0.5 + 0.4 * x, 0.5 + 0.4 * y)
+
+    grid = [-0.8, 0.0, 0.8]
+    samples = [((x, y), true_screen((x, y))) for x in grid for y in grid]
+    cal = GazeCalibration()
+    assert cal.fit(samples) is True
+    assert cal.is_calibrated
+
+    got = cal.apply((0.8, -0.8))          # a calibration point: recovered almost exactly
+    want = true_screen((0.8, -0.8))
+    assert abs(got[0] - want[0]) < 1e-6
+    assert abs(got[1] - want[1]) < 1e-6
+
+    got = cal.apply((0.4, 0.2))           # a point it never saw: interpolated closely
+    want = true_screen((0.4, 0.2))
+    assert abs(got[0] - want[0]) < 0.02
+    assert abs(got[1] - want[1]) < 0.02
+
+
+def test_gaze_calibration_apply_clamps_to_the_screen():
+    grid = [-0.5, 0.0, 0.5]
+    samples = [((x, y), (0.5 + 0.6 * x, 0.5 + 0.6 * y)) for x in grid for y in grid]
+    cal = GazeCalibration()
+    cal.fit(samples)
+    x, y = cal.apply((5.0, 5.0))          # far outside the calibrated range
+    assert 0.0 <= x <= 1.0
+    assert 0.0 <= y <= 1.0
+
+
+def test_gaze_calibration_round_trips_through_json():
+    grid = [-0.6, 0.0, 0.6]
+    samples = [((x, y), (0.5 + 0.3 * x, 0.5 + 0.3 * y)) for x in grid for y in grid]
+    cal = GazeCalibration()
+    cal.fit(samples)
+    restored = GazeCalibration.from_json(cal.to_json())
+    assert restored.is_calibrated
+    for point in ((0.3, -0.4), (-0.6, 0.6)):
+        a, b = cal.apply(point), restored.apply(point)
+        assert abs(a[0] - b[0]) < 1e-9
+        assert abs(a[1] - b[1]) < 1e-9
+
+
+def test_gaze_calibration_from_json_rejects_garbage():
+    for bad in ("", "not json", "{}", '{"x": [1,2,3], "y": [1,2,3,4,5,6]}', "[1,2,3]"):
+        cal = GazeCalibration.from_json(bad)
+        assert not cal.is_calibrated
+        assert cal.apply((0, 0)) is None
+
+
+def test_dwell_fires_once_after_holding_steady():
+    d = DwellClick(hold_seconds=0.5, radius=0.03)
+    t = 0.0
+    fired = [d.update((0.5, 0.5), t := t + DT) for _ in range(20)]   # 0.67 s, plenty
+    assert fired.count(True) == 1
+    assert fired.index(True) >= 14   # not before ~0.5 s of holding
+
+
+def test_dwell_tolerates_small_jitter_within_the_radius():
+    d = DwellClick(hold_seconds=0.4, radius=0.03)
+    t = 0.0
+    fired = []
+    for i in range(18):
+        t += DT
+        jitter = 0.01 if i % 2 == 0 else -0.01   # smaller than the radius
+        fired.append(d.update((0.5 + jitter, 0.5), t))
+    assert True in fired
+
+
+def test_dwell_re_anchors_instead_of_firing_when_the_gaze_jumps():
+    d = DwellClick(hold_seconds=0.4, radius=0.03)
+    t = 0.0
+    for _ in range(10):                   # a third of a second: not enough to fire
+        t += DT
+        assert d.update((0.5, 0.5), t) is False
+    t += DT
+    assert d.update((0.9, 0.9), t) is False   # jumps far away: re-anchors, doesn't fire
+    fired = []
+    for _ in range(10):                   # another third of a second at the new spot
+        t += DT
+        fired.append(d.update((0.9, 0.9), t))
+    assert True not in fired              # needs the full hold time again from here
+
+
+def test_dwell_requires_looking_away_before_firing_again():
+    d = DwellClick(hold_seconds=0.3, radius=0.03)
+    t = 0.0
+    fired = [d.update((0.5, 0.5), t := t + DT) for _ in range(12)]
+    assert fired.count(True) == 1
+    fired += [d.update((0.5, 0.5), t := t + DT) for _ in range(20)]   # still staring: no repeat
+    assert fired.count(True) == 1
+    t += DT
+    d.update((0.9, 0.9), t)               # look away…
+    fired += [d.update((0.5, 0.5), t := t + DT) for _ in range(12)]  # …and back: fires again
+    assert fired.count(True) == 2
+
+
+def test_dwell_resets_on_losing_the_gaze():
+    d = DwellClick(hold_seconds=0.3, radius=0.03)
+    t = 0.0
+    for _ in range(8):
+        t += DT
+        d.update((0.5, 0.5), t)
+    assert d.progress(t) > 0
+    t += DT
+    assert d.update(None, t) is False
+    assert d.progress(t) == 0.0
+
+
+def test_dwell_progress_climbs_then_drops_back_to_zero_after_firing():
+    d = DwellClick(hold_seconds=0.5, radius=0.03)
+    t = 0.0
+    progress = []
+    for _ in range(20):
+        t += DT
+        d.update((0.5, 0.5), t)
+        progress.append(d.progress(t))
+    assert progress[0] < progress[5] < progress[10]
+    assert progress[-1] == 0.0   # fired partway through; armed=False reads as no progress

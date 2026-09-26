@@ -24,12 +24,14 @@ ROOT = Path(SPECPATH)  # noqa: F821 (provided by PyInstaller)
 sys.path.insert(0, str(ROOT))
 import app_version as v  # noqa: E402
 
-model = ROOT / "models" / "hand_landmarker.task"
-if not model.exists():
-    raise SystemExit("The hand model is missing. Run `python tools/fetch_model.py` first.")
+hand_model = ROOT / "models" / "hand_landmarker.task"
+eye_model = ROOT / "models" / "face_landmarker.task"
+if not hand_model.exists() or not eye_model.exists():
+    raise SystemExit("A tracking model is missing. Run `python tools/fetch_model.py` first.")
 
 datas = [
-    (str(model), "models"),
+    (str(hand_model), "models"),
+    (str(eye_model), "models"),
     (str(ROOT / "assets" / "icon.png"), "assets"),
     (str(ROOT / "assets" / "check.png"), "assets"),
 ]
@@ -75,6 +77,7 @@ a = Analysis(  # noqa: F821
     datas=datas,
     hiddenimports=[
         "mediapipe.tasks.python.vision.hand_landmarker",
+        "mediapipe.tasks.python.vision.face_landmarker",
         "mediapipe.tasks.python.core.base_options",
     ] + collect_submodules("mediapipe.tasks.c") + (["Quartz", "ApplicationServices", "AVFoundation", "AppKit"] if sys.platform == "darwin" else []),
     hookspath=[],
