@@ -46,6 +46,7 @@ try:
     from camera import CameraCapabilities, CameraInfo, OpenCVCamera, list_cameras, probe_camera_indices, \
         probe_resolutions, validate_stream_url
     from diagnostics import Heartbeat, Watchdog, setup_logging
+    from gesture_state import GazeCalibration
     from pointer_output import PointerOutput, create_backend
     from tracking_engine import TrackingEngine
 except ImportError as exc:
@@ -64,6 +65,7 @@ GESTURE_COLORS = {
     "ready": "#fbbf24", "pinched": "#34d399", "dragging": "#38bdf8", "scrolling": "#a78bfa",
     "paused": "#f87171", "hide": "#f87171", "no_hand": "#8290a6", "open": "#cbd5e1",
     "pointing": "#cbd5e1", "starting": "#8290a6",
+    "gazing": "#cbd5e1", "dwelling": "#fbbf24", "no_face": "#8290a6", "uncalibrated": "#f87171",
 }
 
 
@@ -146,6 +148,107 @@ class HaloOverlay(QWidget):
         p.drawEllipse(center, 3, 3)
 
 
+class CalibrationDialog(QDialog):
+    """Look at nine dots in turn; fits gaze -> screen from what the eye
+    tracker saw while each one was up.
+
+    Needs eye tracking already running (MainWindow checks before opening
+    this): it reads ``engine.last_gaze_offset`` on a timer, the same way the
+    main window reads ``engine.view`` — nothing here touches the tracking
+    thread directly.
+    """
+
+    POINTS = [(0.1, 0.1), (0.5, 0.1), (0.9, 0.1), (0.1, 0.5), (0.5, 0.5),
+              (0.9, 0.5), (0.1, 0.9), (0.5, 0.9), (0.9, 0.9)]
+    SETTLE_MS = 700     # give the eye time to actually get there before sampling
+    SAMPLE_MS = 500     # then collect readings for this long
+
+    def __init__(self, main: "MainWindow") -> None:
+        super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.main = main
+        self.setModal(True)
+        left, top, width, height = main.output.backend.desktop_rect(main.settings.screen)
+        self.setGeometry(left, top, width, height)
+        self.setStyleSheet("background: #05070d;")
+        self.samples: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        self._index = 0
+        self._readings: list[tuple[float, float]] = []
+
+        self.hint = QLabel(self)
+        self.hint.setStyleSheet("color: #aebbd0; font-size: 15px; background: transparent;")
+        self.hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.hint.setGeometry(0, height - 60, width, 40)
+
+        self.dot = QLabel(self)
+        self.dot.setFixedSize(28, 28)
+        self.dot.setStyleSheet("background: #22d3ee; border-radius: 14px; border: 3px solid white;")
+
+        self._settle = QTimer(self, singleShot=True, interval=self.SETTLE_MS)
+        self._settle.timeout.connect(self._start_sampling)
+        self._sample_timer = QTimer(self, interval=33)
+        self._sample_timer.timeout.connect(self._sample)
+        self._finish_sample = QTimer(self, singleShot=True, interval=self.SAMPLE_MS)
+        self._finish_sample.timeout.connect(self._next_point)
+
+        self._show_point()
+
+    def keyPressEvent(self, event: Any) -> None:  # noqa: N802 (Qt name)
+        if event.key() == Qt.Key.Key_Escape:
+            self.reject()
+        else:
+            super().keyPressEvent(event)
+
+    def _show_point(self) -> None:
+        fx, fy = self.POINTS[self._index]
+        x = int(fx * self.width()) - self.dot.width() // 2
+        y = int(fy * self.height()) - self.dot.height() // 2
+        self.dot.move(x, y)
+        self.dot.show()
+        self.hint.setText(f"Look at the dot… {self._index + 1} of {len(self.POINTS)}. Esc cancels.")
+        self._readings = []
+        self._settle.start()
+
+    def _start_sampling(self) -> None:
+        self._sample_timer.start()
+        self._finish_sample.start()
+
+    def _sample(self) -> None:
+        engine = self.main.engine
+        offset = engine.last_gaze_offset if engine is not None else None
+        if offset is not None:
+            self._readings.append(offset)
+
+    def _next_point(self) -> None:
+        self._sample_timer.stop()
+        if self._readings:
+            ox = sum(o[0] for o in self._readings) / len(self._readings)
+            oy = sum(o[1] for o in self._readings) / len(self._readings)
+            self.samples.append(((ox, oy), self.POINTS[self._index]))
+        self._index += 1
+        if self._index >= len(self.POINTS):
+            self._finish()
+        else:
+            self._show_point()
+
+    def _finish(self) -> None:
+        self.dot.hide()
+        if len(self.samples) < GazeCalibration.MIN_SAMPLES:
+            QMessageBox.warning(self, "Calibration incomplete",
+                "Finger Mouse couldn't see your eyes for enough of that. Make sure your face is well lit "
+                "and centred in the camera, then try again.")
+            self.reject()
+            return
+        cal = GazeCalibration()
+        if not cal.fit(self.samples):
+            QMessageBox.warning(self, "Calibration didn't take",
+                "That didn't produce a usable mapping. Try again, keeping your head still and looking "
+                "only at each dot as it appears.")
+            self.reject()
+            return
+        self.main.change_settings(eye_calibration=cal.to_json())
+        self.accept()
+
+
 # ---------------------------------------------------------------------------
 # Settings dialog
 # ---------------------------------------------------------------------------
@@ -163,8 +266,9 @@ class SettingsDialog(QDialog):
 
         tabs = QTabWidget()
         for build, name in ((self._pointer_tab, "Pointer"), (self._click_tab, "Click && drag"),
-                            (self._scroll_tab, "Scrolling"), (self._camera_tab, "Camera"),
-                            (self._gestures_tab, "Hide gesture"), (self._advanced_tab, "Advanced")):
+                            (self._scroll_tab, "Scrolling"), (self._eye_tab, "Eye tracking"),
+                            (self._camera_tab, "Camera"), (self._gestures_tab, "Hide gesture"),
+                            (self._advanced_tab, "Advanced")):
             # Each page scrolls rather than squeezing its text when the window is short.
             scroll = QScrollArea()
             scroll.setObjectName("pageScroll")
@@ -263,6 +367,10 @@ class SettingsDialog(QDialog):
     # -- tabs ---------------------------------------------------------------
     def _pointer_tab(self) -> QWidget:
         page, l = self._page()
+        self._choice(l, "tracking_mode", "Tracking mode",
+                     [("hand", "Hand gestures"), ("eye", "Eye gaze (beta)")],
+                     "Move the pointer with a hand pinching to click, or by looking at the screen. "
+                     "The settings below are for hand mode; eye mode has its own tab.")
         self._slider(l, "smoothing", "Smoothing", 0, 100, "{}%",
                      "Higher holds the pointer steadier; lower follows faster. Small hand tremors are "
                      "smoothed away more strongly than real movement.")
@@ -312,6 +420,35 @@ class SettingsDialog(QDialog):
         self._slider(l, "scroll_dead_zone", "Dead zone", 5, 60, "{}% of hand size",
                      "How far to move before scrolling starts, so small wobbles don't scroll.")
         self._check(l, "scroll_reverse", "Reverse direction")
+        l.addStretch(1)
+        return page
+
+    def _eye_tab(self) -> QWidget:
+        page, l = self._page()
+        self._hint(l, "Look at the screen to move the pointer instead of using your hand. Needs a short "
+                      "calibration first, and is happiest when your head stays roughly still and facing "
+                      "the camera — a head turn can throw it off more than a hand-tracking wobble would.")
+        self._choice(l, "eye_click_mode", "Click by",
+                     [("dwell", "Holding your gaze still (recommended)"),
+                      ("blink", "A deliberate blink"),
+                      ("both", "Either one")])
+        self._slider(l, "eye_dwell_ms", "Dwell time", 300, 2500, "{} ms", step=50,
+                     hint="How long a steady gaze takes to click.")
+        self._slider(l, "eye_dwell_radius", "Dwell steadiness", 1, 15, "{}% of the screen",
+                     hint="How far your gaze may drift and still count as “still”.")
+        self._slider(l, "eye_blink_ms", "Blink hold time", 100, 800, "{} ms", step=25,
+                     hint="How long an eye must stay shut to count as a deliberate blink, not an ordinary one.")
+        self._slider(l, "eye_smoothing", "Smoothing", 0, 100, "{}%",
+                     hint="Gaze tracking is noisier than hand tracking, so this usually wants to sit higher.")
+        l.addSpacing(6)
+        self.calibration_status = QLabel()
+        self.calibration_status.setObjectName("value")
+        l.addWidget(self.calibration_status)
+        self.calibrate_button = QPushButton("Calibrate…")
+        self.calibrate_button.clicked.connect(self.main.open_calibration)
+        l.addWidget(self.calibrate_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self._hint(l, "Calibrating needs tracking already running in eye mode: pick Eye gaze above, close "
+                      "this window, press Start tracking, then open Settings again to calibrate.")
         l.addStretch(1)
         return page
 
@@ -444,6 +581,7 @@ class SettingsDialog(QDialog):
         self.stream_url.setText(s.stream_url)
         self.populate_cameras()
         self.update_camera_info()
+        self.update_calibration_status()
         self._loading = was
 
     def _set(self, key: str, value: Any) -> None:
@@ -505,6 +643,14 @@ class SettingsDialog(QDialog):
                 self.zoom.setValue(caps.zoom)
                 self._loading = was
         self.driver_button.setVisible(caps.driver_settings)
+
+    def update_calibration_status(self) -> None:
+        calibrated = bool(self.main.settings.eye_calibration)
+        self.calibration_status.setText("Calibrated ✓" if calibrated else "Not calibrated yet")
+        ready = self.main.is_tracking() and self.main.settings.tracking_mode == "eye"
+        self.calibrate_button.setEnabled(ready)
+        self.calibrate_button.setToolTip(
+            "" if ready else "Switch to Eye gaze mode and press Start tracking first.")
 
     def _detect_modes(self) -> None:
         cam_id = self.main.settings.camera
@@ -614,12 +760,12 @@ class MainWindow(QMainWindow):
         titles = QVBoxLayout()
         title = QLabel(APP_NAME)
         title.setObjectName("title")
-        subtitle = QLabel("Point with your index finger. Pinch to click, pinch and hold to drag, "
-                          "two fingers up to scroll.")
-        subtitle.setObjectName("subtitle")
-        subtitle.setWordWrap(True)
+        self.subtitle = QLabel()
+        self.subtitle.setObjectName("subtitle")
+        self.subtitle.setWordWrap(True)
+        self._update_subtitle()
         titles.addWidget(title)
-        titles.addWidget(subtitle)
+        titles.addWidget(self.subtitle)
         header.addLayout(titles, 1)
         settings_button = QPushButton("Settings")
         settings_button.clicked.connect(self.open_settings)
@@ -672,6 +818,14 @@ class MainWindow(QMainWindow):
         foot.setWordWrap(True)
         layout.addWidget(foot)
         self.setCentralWidget(central)
+
+    def _update_subtitle(self) -> None:
+        if self.settings.tracking_mode == "eye":
+            self.subtitle.setText("Look at the screen to move the pointer. Hold your gaze still (or blink) "
+                                  "to click — calibrate first in Settings → Eye tracking.")
+        else:
+            self.subtitle.setText("Point with your index finger. Pinch to click, pinch and hold to drag, "
+                                  "two fingers up to scroll.")
 
     def _apply_style(self) -> None:
         check = (ASSETS / "check.png").as_posix()
@@ -755,6 +909,10 @@ class MainWindow(QMainWindow):
         self.diag.setVisible(new.show_diagnostics)
         if new.verbose_logging != old.verbose_logging:
             logging.getLogger().setLevel(logging.DEBUG if new.verbose_logging else logging.INFO)
+        if new.tracking_mode != old.tracking_mode:
+            self._update_subtitle()
+            if self.settings_dialog is not None:
+                self.settings_dialog.update_calibration_status()
         if new.camera != old.camera:
             self._select_quick_camera()
         if self.engine is not None:
@@ -772,6 +930,18 @@ class MainWindow(QMainWindow):
         self.settings_dialog.show()
         self.settings_dialog.raise_()
         self.settings_dialog.activateWindow()
+
+    def open_calibration(self) -> None:
+        if self.engine is None or self.output is None or self.settings.tracking_mode != "eye":
+            QMessageBox.information(self, "Start eye tracking first",
+                "Switch to Eye gaze mode in Settings and press Start tracking, then come back here to "
+                "calibrate.")
+            return
+        dialog = CalibrationDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if self.settings_dialog is not None:
+                self.settings_dialog.load(self.settings)
+            QMessageBox.information(self, "Calibrated", "Eye tracking is calibrated. Look around to try it.")
 
     # -- cameras ----------------------------------------------------------------
     def refresh_cameras(self) -> None:
@@ -868,6 +1038,8 @@ class MainWindow(QMainWindow):
         self.start_button.setText("Stop tracking")
         if self.tray:
             self.tray_toggle.setText("Stop tracking")
+        if self.settings_dialog is not None:
+            self.settings_dialog.update_calibration_status()
         self._set_status("starting", "Starting the camera…")
         if sys.platform.startswith("linux") and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
             self._set_status("starting", "Wayland desktops usually block apps from moving the pointer. If nothing "
@@ -897,6 +1069,7 @@ class MainWindow(QMainWindow):
         self.preview.setText("The camera picture appears here once tracking starts.")
         if self.settings_dialog is not None:
             self.settings_dialog.update_camera_info()
+            self.settings_dialog.update_calibration_status()
         if self._quitting:
             QApplication.quit()
 
@@ -943,7 +1116,8 @@ class MainWindow(QMainWindow):
                                        Qt.TransformationMode.FastTransformation)
             self.preview.setPixmap(pixmap)
 
-        if (view.cursor and view.hand and self.settings.show_halo and view.gesture not in ("paused", "no_hand")):
+        if (view.cursor and view.tracked and self.settings.show_halo
+                and view.gesture not in ("paused", "no_hand", "no_face", "uncalibrated")):
             self.overlay.set_color(QColor(GESTURE_COLORS.get(view.gesture, "#22d3ee")))
             self.overlay.place(native_to_logical(*view.cursor))
         elif self.overlay.isVisible():
@@ -999,7 +1173,8 @@ class MainWindow(QMainWindow):
     def _set_status(self, gesture: str, text: str) -> None:
         names = {"ready": "Ready", "pinched": "Pinch", "dragging": "Dragging", "scrolling": "Scrolling",
                  "paused": "Paused", "hide": "Hide", "no_hand": "No hand", "open": "Tracking",
-                 "pointing": "Tracking", "starting": "Starting", "stopped": "Stopped"}
+                 "pointing": "Tracking", "starting": "Starting", "stopped": "Stopped",
+                 "gazing": "Tracking", "dwelling": "Click", "no_face": "No face", "uncalibrated": "Not calibrated"}
         chip = names.get(gesture, "Tracking")
         if self.chip.text() != chip:
             self.chip.setText(chip)
@@ -1129,6 +1304,19 @@ def self_test(out_path: Optional[str]) -> int:
         tracker.close()
         return f"{kind}, first frame {ms:.0f} ms"
 
+    def eye_model() -> str:
+        from eye_tracker import EyeTracker, check_bundle as eye_check_bundle
+        from hand_tracker import start_check
+        ok, why = start_check()   # shared with hand_model: same native library, same probe
+        if not ok:
+            return f"not opened here ({why}); " + eye_check_bundle()
+        tracker = EyeTracker()
+        started = time.perf_counter()
+        tracker.process(np.zeros((360, 640, 3), np.uint8))
+        ms = (time.perf_counter() - started) * 1000
+        tracker.close()
+        return f"first frame {ms:.0f} ms"
+
     def pointer() -> str:
         backend = create_backend()
         return f"{backend.name}, desktop {backend.desktop_rect('primary')}"
@@ -1139,6 +1327,7 @@ def self_test(out_path: Optional[str]) -> int:
         return f"Qt platform {app.platformName()}"
 
     check("hand_model", hand_model)
+    check("eye_model", eye_model)
     check("qt", qt)
     check("pointer_backend", pointer)
     check("camera_listing", lambda: [c.label for c in list_cameras()])

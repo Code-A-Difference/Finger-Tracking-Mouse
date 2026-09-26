@@ -16,6 +16,11 @@ frame by frame without a webcam:
                           with a dead zone, easing and a speed cap.
 * ``HeldPose``          — "this pose, held steadily for N seconds", used by
                           the optional hide gesture.
+* ``GazeCalibration``   — fits a raw gaze offset (eye_pose.py) to screen
+                          coordinates from a short look-at-these-dots
+                          calibration, and applies it afterwards.
+* ``DwellClick``        — eye-tracking's click: hold the (calibrated, smoothed)
+                          gaze still over one spot for a moment.
 
 The tracking thread feeds these measurements and passes the returned
 actions to the pointer output thread, which does the actual clicking.
@@ -23,9 +28,10 @@ actions to the pointer output thread, which does the actual clicking.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 
 Action = Literal[
     "armed",          # an open hand was seen: the next pinch will count
@@ -488,5 +494,162 @@ class HeldPose:
             self._latched = True
             self._fired_at = now
             self._since = None
+            return True
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Eye tracking: turning a raw gaze offset into a screen point, and a dwell
+# into a click
+# ---------------------------------------------------------------------------
+
+def _solve(matrix: list[list[float]], vector: list[float]) -> Optional[list[float]]:
+    """Solve a small linear system by Gauss-Jordan elimination with partial
+    pivoting. None if it's singular (degenerate calibration points)."""
+    n = len(matrix)
+    aug = [row[:] + [vector[i]] for i, row in enumerate(matrix)]
+    for col in range(n):
+        pivot_row = max(range(col, n), key=lambda r: abs(aug[r][col]))
+        if abs(aug[pivot_row][col]) < 1e-9:
+            return None
+        aug[col], aug[pivot_row] = aug[pivot_row], aug[col]
+        pivot = aug[col][col]
+        aug[col] = [v / pivot for v in aug[col]]
+        for r in range(n):
+            if r != col:
+                factor = aug[r][col]
+                aug[r] = [aug[r][k] - factor * aug[col][k] for k in range(n + 1)]
+    return [aug[i][n] for i in range(n)]
+
+
+class GazeCalibration:
+    """Maps a raw gaze offset (eye_pose.EyeMeasure.offset) to a normalised
+    (0–1) screen position.
+
+    A classic six-term second-degree polynomial in the two offset axes
+    (``1, x, y, xy, x², y²`` for each of screen-x and screen-y), the standard
+    simple mapping for webcam eye tracking: it bends enough to follow how an
+    eyeball's rotation maps onto a flat screen, without enough free
+    parameters to overfit a short calibration. Fit by least squares (the
+    normal equations, solved directly — nine calibration points and six
+    terms, no need for numpy here), so a slightly misjudged dot averages out
+    rather than distorting the whole mapping.
+    """
+
+    MIN_SAMPLES = 6
+
+    def __init__(self) -> None:
+        self.coeffs_x: Optional[list[float]] = None
+        self.coeffs_y: Optional[list[float]] = None
+
+    @property
+    def is_calibrated(self) -> bool:
+        return self.coeffs_x is not None and self.coeffs_y is not None
+
+    def reset(self) -> None:
+        self.coeffs_x = None
+        self.coeffs_y = None
+
+    @staticmethod
+    def _terms(offset: tuple[float, float]) -> list[float]:
+        x, y = offset
+        return [1.0, x, y, x * y, x * x, y * y]
+
+    def fit(self, samples: Sequence[tuple[tuple[float, float], tuple[float, float]]]) -> bool:
+        """``samples``: [(gaze_offset, (screen_x, screen_y)), ...], both 0–1
+        or -1..1 as produced by eye_pose. Returns whether it took."""
+        if len(samples) < self.MIN_SAMPLES:
+            return False
+        terms = [self._terms(offset) for offset, _ in samples]
+        n = len(terms[0])
+        ata = [[sum(row[i] * row[j] for row in terms) for j in range(n)] for i in range(n)]
+        atx = [sum(row[i] * target[0] for row, (_, target) in zip(terms, samples)) for i in range(n)]
+        aty = [sum(row[i] * target[1] for row, (_, target) in zip(terms, samples)) for i in range(n)]
+        cx = _solve(ata, atx)
+        cy = _solve(ata, aty)
+        if cx is None or cy is None:
+            return False
+        self.coeffs_x, self.coeffs_y = cx, cy
+        return True
+
+    def apply(self, offset: tuple[float, float]) -> Optional[tuple[float, float]]:
+        """The screen position (clamped 0–1) this offset maps to, or None
+        before calibration."""
+        if not self.is_calibrated:
+            return None
+        terms = self._terms(offset)
+        x = sum(c * t for c, t in zip(self.coeffs_x, terms))
+        y = sum(c * t for c, t in zip(self.coeffs_y, terms))
+        return (max(0.0, min(1.0, x)), max(0.0, min(1.0, y)))
+
+    def to_json(self) -> str:
+        if not self.is_calibrated:
+            return ""
+        return json.dumps({"x": self.coeffs_x, "y": self.coeffs_y})
+
+    @classmethod
+    def from_json(cls, text: str) -> "GazeCalibration":
+        cal = cls()
+        if not text:
+            return cal
+        try:
+            data = json.loads(text)
+            x, y = data["x"], data["y"]
+            if (isinstance(x, list) and isinstance(y, list) and len(x) == len(y) == 6
+                    and all(isinstance(v, (int, float)) for v in x + y)):
+                cal.coeffs_x, cal.coeffs_y = [float(v) for v in x], [float(v) for v in y]
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+            pass
+        return cal
+
+
+class DwellClick:
+    """Click by looking, and holding still: the eye-tracking equivalent of a
+    pinch. A real gaze never sits at one exact pixel, so "still" means
+    within ``radius`` of a rolling anchor, not motionless; drifting past the
+    radius re-anchors instead of cancelling, so an unsteady gaze still gets
+    there. Firing needs looking away and back (past ``radius``) before it can
+    fire again, so it can't repeat by staring.
+    """
+
+    def __init__(self, hold_seconds: float = 0.7, radius: float = 0.035) -> None:
+        self.hold_seconds = hold_seconds
+        self.radius = radius
+        self.reset()
+
+    def configure(self, hold_seconds: float, radius: float) -> None:
+        self.hold_seconds = hold_seconds
+        self.radius = radius
+
+    def reset(self) -> None:
+        self._anchor: Optional[Point] = None
+        self._since: Optional[float] = None
+        self._armed = True   # must move away from the last click point before it can fire again
+
+    def progress(self, now: float) -> float:
+        if self._since is None or not self._armed:
+            return 0.0
+        return max(0.0, min(1.0, (now - self._since) / self.hold_seconds))
+
+    def update(self, position: Optional[Point], now: float) -> bool:
+        """Feed one frame's (smoothed, calibrated) gaze point. True = click now."""
+        if position is None:
+            self.reset()
+            return False
+        if self._anchor is None:
+            self._anchor = position
+            self._since = now
+            return False
+        moved = math.hypot(position[0] - self._anchor[0], position[1] - self._anchor[1])
+        if moved > self.radius:
+            self._anchor = position
+            self._since = now
+            self._armed = True
+            return False
+        if not self._armed:
+            return False
+        if self._since is not None and now - self._since >= self.hold_seconds:
+            self._armed = False
+            self._since = now   # so progress() doesn't jump back to 100% mid-cooldown
             return True
         return False
