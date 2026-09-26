@@ -2,8 +2,10 @@
 
 Control your computer's real mouse pointer with one hand and a webcam: point
 to move, pinch to click, pinch and hold to drag, raise two fingers to scroll.
-Built for people who find a physical mouse hard to use. Everything runs on
-your own computer; no video leaves it, and it doesn't need the internet.
+Or switch to **eye tracking**: look where you want the pointer, and click by
+holding your gaze still or blinking. Built for people who find a physical
+mouse hard to use. Everything runs on your own computer; no video leaves it,
+and it doesn't need the internet.
 
 ## Download
 
@@ -49,19 +51,42 @@ pointing hand used to move, and scrolling only starts from a steady hand
 that isn't pinching. The pointer stays still while you scroll. There's a
 dead zone, a speed cap and a gentle start.
 
+### Eye tracking
+
+An alternative to hand gestures: Settings → Pointer → Tracking mode → **Eye
+gaze**. It follows where your iris sits within your own eye socket, which
+moves with your eyeball and barely with your head — turning your head
+without moving your eyes hardly changes it, which is what lets a short
+calibration turn it into an accurate screen position.
+
+1. Switch to eye gaze mode, start tracking, then open Settings → Eye
+   tracking → **Calibrate…** and look at each of the nine dots as it
+   appears.
+2. **Click by holding your gaze still** (the default), by a **deliberate
+   blink**, or either — an ordinary quick blink doesn't count, only one held
+   past a threshold. Dwelling tolerates a little drift rather than demanding
+   a frozen stare, and won't click twice in a row without looking away first.
+
+It's happiest with your head reasonably still and facing the camera; a head
+turn can throw off the mapping more than hand tracking's equivalent wobble
+would. There's no drag gesture in eye mode yet, only clicking.
+
 ### Settings
 
 Everything is under **Settings**, applies immediately, and is saved to your
 user folder (`%APPDATA%\Finger Mouse`, `~/Library/Application Support/Finger
 Mouse`, or `~/.config/Finger Mouse`):
 
-- **Pointer:** smoothing, hand reach (how much of the camera view spans the
-  screen), main screen or all screens, halo size, pause while using the real
-  mouse, and a shortcut to the system's own pointer-size setting.
+- **Pointer:** tracking mode (hand or eye), smoothing, hand reach (how much
+  of the camera view spans the screen), main screen or all screens, halo
+  size, pause while using the real mouse, and a shortcut to the system's own
+  pointer-size setting.
 - **Click & drag:** turn clicking or dragging on and off, pinch threshold,
   release gap, how many frames must agree, hold time before a drag.
 - **Scrolling:** on/off, pose (two fingers, or index only), speed, dead zone,
   direction.
+- **Eye tracking:** click by dwell, blink or either, dwell time and
+  steadiness, blink hold time, smoothing, and the Calibrate button.
 - **Camera:** see below.
 - **Hide gesture** (off by default): hold up only your middle finger to stop
   tracking and hide Finger Mouse to the tray, minimise it, or quit it. It
@@ -126,7 +151,7 @@ Python 3.12 or newer.
 python -m venv .venv
 # Windows: .venv\Scripts\activate    macOS/Linux: source .venv/bin/activate
 python -m pip install -r requirements.txt
-python tools/fetch_model.py        # the hand model, checked against a pinned SHA-256
+python tools/fetch_model.py        # the hand and face models, checked against pinned SHA-256s
 python Finger_tracker.py
 ```
 
@@ -139,9 +164,11 @@ checks a setup without a camera.
 |---|---|
 | `Finger_tracker.py` | the window, settings dialog, tray icon, pointer halo |
 | `tracking_engine.py` | tracking thread: frames → landmarks → gestures → pointer commands |
-| `gesture_state.py` | pointer smoothing, click/drag, scroll and hold-gesture state machines (pure Python) |
+| `gesture_state.py` | pointer smoothing, click/drag, scroll, hold-gesture, gaze calibration and dwell-click state machines (pure Python) |
 | `hand_pose.py` | pinch distance and finger states from landmarks, independent of hand angle and distance |
 | `hand_tracker.py` | MediaPipe Tasks hand landmarker (model loaded from memory) |
+| `eye_pose.py` | iris-in-socket offset and blink scores from face landmarks (pure Python) |
+| `eye_tracker.py` | MediaPipe Tasks face landmarker + blendshapes (shares hand_tracker's macOS probe) |
 | `camera.py` | camera listing, webcam and network-stream sources, capture thread |
 | `pointer_output.py` | output thread; SendInput (Windows), Quartz (macOS), XTest via PyAutoGUI (Linux) |
 | `diagnostics.py` | rotating log file and the stall watchdog |
@@ -149,11 +176,11 @@ checks a setup without a camera.
 | `app_version.py` | name, version and publisher, used by the build and installers |
 
 Tests cover every gesture transition, pose reading (including MediaPipe's
-own sample photos through the real model), settings, the output thread's
-ordering and release guarantees, and camera stalls. There are also
-end-to-end runs of the whole tracking loop and of the app itself. On
-Windows, a test checks what SendInput delivers through a low-level hook,
-without clicking anything.
+own sample photos through the real model), gaze calibration and dwell-click
+math, settings, the output thread's ordering and release guarantees, and
+camera stalls. There are also end-to-end runs of the whole tracking loop
+(hand and eye) and of the app itself. On Windows, a test checks what
+SendInput delivers through a low-level hook, without clicking anything.
 
 ## Building and releasing
 

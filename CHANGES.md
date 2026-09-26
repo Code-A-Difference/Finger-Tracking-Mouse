@@ -1,5 +1,30 @@
 # What changed
 
+## 2.3.0
+
+### Eye tracking
+- **A second way to control the pointer: your gaze.** Settings → Pointer →
+  Tracking mode switches between hand gestures and eye tracking. Eye mode
+  reads where your iris sits in its own eye socket (MediaPipe's face and
+  iris landmarks), which moves with the eyeball and barely with the head,
+  and maps it onto the screen with a short calibration (look at nine dots
+  in turn) — same idea as the hand-mode setup, one screen instead of one
+  step.
+- **Click by holding your gaze still** (dwell, the default) **or by a
+  deliberate blink**, or both — Settings → Eye tracking. A quick, ordinary
+  blink doesn't count; only one held past a configurable threshold does.
+  Dwelling tolerates a little drift (the "steadiness" setting) rather than
+  demanding a frozen stare, and re-arms only once you've looked away, so it
+  can't click twice by lingering.
+- Runs on the same four-thread engine as hand mode — its own gesture state
+  (`gesture_state.GazeCalibration`, `DwellClick`), its own model
+  (`face_landmarker.task`, pinned by SHA-256 next to the hand model), but
+  the same camera thread, pointer output thread and watchdog. Switching
+  modes tears down and rebuilds just the tracker, live.
+- Best with your head reasonably still and facing the camera; a head turn
+  (not just an eye movement) can throw off the mapping more than hand
+  tracking's equivalent wobble would. No drag gesture yet — click only.
+
 ## 2.2.0
 
 ### Clicking and dragging

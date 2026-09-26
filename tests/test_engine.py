@@ -271,6 +271,63 @@ def test_switching_camera_releases_first():
     assert len(grabbers) == 2 and grabbers[0].stopped
 
 
+def _eye_calibration_json():
+    """A calibration where a centred gaze offset (0, 0) maps to screen centre."""
+    from gesture_state import GazeCalibration
+
+    def true_screen(offset):
+        x, y = offset
+        return (0.5 + 0.4 * x, 0.5 + 0.4 * y)
+
+    grid = [-0.8, 0.0, 0.8]
+    cal = GazeCalibration()
+    cal.fit([((x, y), true_screen((x, y))) for x in grid for y in grid])
+    return cal.to_json()
+
+
+def test_eye_mode_moves_the_pointer_by_calibrated_gaze_and_clicks_by_dwelling():
+    from test_eye_pose import landmarks as eye_landmarks
+
+    settings = Settings(tracking_mode="eye", eye_calibration=_eye_calibration_json(),
+                        eye_dwell_ms=100, eye_dwell_radius=10)
+    gaze_frame = [eye_landmarks(), {}]   # a centred gaze -> calibrated to screen centre
+    frames = [gaze_frame] * 20           # 0.67 s: comfortably past the 100 ms dwell
+    calls, output, events, *_ = run(frames, settings=settings)
+    moves = of(calls, "move")
+    assert moves, "the pointer never moved"
+    # Eye mode maps the calibrated screen fraction straight onto the desktop
+    # (no "reach" margin, unlike hand mode's screen() helper above) — offset
+    # (0, 0) is calibrated to screen fraction (0.5, 0.5), i.e. the centre of
+    # the 1000x800 test desktop.
+    ex, ey = 0.5 * 999, 0.5 * 799
+    x, y = moves[-1][1], moves[-1][2]
+    assert abs(x - ex) <= 3 and abs(y - ey) <= 3
+    assert of(calls, "down") and of(calls, "up"), "dwelling never clicked"
+    assert ("gesture", "click") in events
+
+
+def test_eye_mode_without_calibration_tracks_but_never_clicks():
+    from test_eye_pose import landmarks as eye_landmarks
+
+    settings = Settings(tracking_mode="eye", eye_dwell_ms=100)   # eye_calibration left blank
+    frames = [[eye_landmarks(), {}]] * 20
+    calls, output, events, *_ = run(frames, settings=settings)
+    assert not of(calls, "move")
+    assert not of(calls, "down")
+
+
+def test_eye_mode_losing_the_face_resets_the_dwell():
+    from test_eye_pose import landmarks as eye_landmarks
+
+    settings = Settings(tracking_mode="eye", eye_calibration=_eye_calibration_json(),
+                        eye_dwell_ms=200, eye_dwell_radius=10)
+    frames = [[eye_landmarks(), {}]] * 5   # part-way into a dwell
+    frames += [None] * 3                   # the face is lost: the dwell must restart
+    frames += [[eye_landmarks(), {}]] * 5
+    calls, *_ = run(frames, settings=settings)
+    assert not of(calls, "down"), "a lost face should not let a click carry over"
+
+
 def test_hide_gesture_only_when_enabled():
     hide = [hand(extended=("middle",)) for _ in range(60)]                  # 2 s of the pose
     _, _, events, *_ = run(hide)

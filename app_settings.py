@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from app_version import APP_NAME
+from gesture_state import GazeCalibration
 
 SETTINGS_VERSION = 2
 log = logging.getLogger(__name__)
@@ -30,10 +31,15 @@ SCREEN_MODES = ("primary", "all")
 SCROLL_POSES = ("two_fingers", "index")
 HIDE_ACTIONS = ("tray", "minimize", "quit")
 RESOLUTIONS = ("auto", "640x480", "800x600", "960x540", "1280x720", "1280x960", "1920x1080")
+TRACKING_MODES = ("hand", "eye")
+EYE_CLICK_MODES = ("dwell", "blink", "both")
 
 
 @dataclass
 class Settings:
+    # ---- tracking mode --------------------------------------------------
+    tracking_mode: str = "hand"      # "hand" (pinch/drag/scroll) or "eye" (gaze pointer, dwell/blink click)
+
     # ---- camera -------------------------------------------------------
     camera: str = "auto"            # "auto", "cv:<index>" or "url" (uses stream_url)
     camera_resolution: str = "auto"  # one of RESOLUTIONS; the driver has the final say
@@ -63,6 +69,14 @@ class Settings:
     scroll_sensitivity: int = 35
     scroll_dead_zone: int = 25       # % of hand size to move before scrolling starts
     scroll_reverse: bool = False
+
+    # ---- eye tracking ---------------------------------------------------
+    eye_smoothing: int = 65          # like `smoothing`, but gaze needs steadier defaults — it's noisier
+    eye_click_mode: str = "dwell"    # "dwell" (look and hold), "blink" or "both"
+    eye_dwell_ms: int = 700          # how long a steady gaze takes to click
+    eye_dwell_radius: int = 4        # % of screen width the gaze may drift and still count as "steady"
+    eye_blink_ms: int = 250          # how long an eye must stay shut to count as a deliberate blink
+    eye_calibration: str = ""        # GazeCalibration.to_json(); "" = not calibrated yet
 
     # ---- optional hide gesture ----------------------------------------
     hide_gesture_enabled: bool = False
@@ -102,12 +116,18 @@ _RANGES: dict[str, tuple[float, float]] = {
     "scroll_sensitivity": (5, 100),
     "scroll_dead_zone": (5, 60),
     "hide_gesture_hold_ms": (600, 3000),
+    "eye_smoothing": (0, 100),
+    "eye_dwell_ms": (300, 2500),
+    "eye_dwell_radius": (1, 15),
+    "eye_blink_ms": (100, 800),
 }
 _CHOICES: dict[str, tuple[str, ...]] = {
     "screen": SCREEN_MODES,
     "scroll_pose": SCROLL_POSES,
     "hide_gesture_action": HIDE_ACTIONS,
     "camera_resolution": RESOLUTIONS,
+    "tracking_mode": TRACKING_MODES,
+    "eye_click_mode": EYE_CLICK_MODES,
 }
 
 
@@ -140,6 +160,9 @@ def validate(data: dict[str, Any]) -> Settings:
     if not (cam in ("auto", "url") or (cam.startswith("cv:") and cam[3:].isdigit())):
         clean["camera"] = "auto"
     clean["stream_url"] = clean["stream_url"].strip()[:500]
+    if not GazeCalibration.from_json(clean["eye_calibration"]).is_calibrated:
+        clean["eye_calibration"] = ""
+    clean["eye_calibration"] = clean["eye_calibration"][:2000]
     # The hide gesture only runs once its warning has been accepted.
     if not clean["hide_gesture_confirmed"]:
         clean["hide_gesture_enabled"] = False
