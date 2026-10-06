@@ -1,6 +1,6 @@
 # What changed
 
-## Unreleased
+## 2.4.0
 
 ### Eye tracking accuracy
 - **Calibration uses 13 points, not 9**: the 3x3 grid now sits nearer the
