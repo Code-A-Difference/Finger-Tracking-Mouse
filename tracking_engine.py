@@ -101,6 +101,8 @@ class TrackingEngine(threading.Thread):
         self.gaze_calibration = GazeCalibration.from_json(s.eye_calibration)
         self.dwell = DwellClick(s.eye_dwell_ms / 1000, s.eye_dwell_radius / 100)
         self.last_gaze_offset: Optional[tuple[float, float]] = None   # read by the calibration dialog
+        self.last_gaze_head: tuple[float, float] = (0.0, 0.0)
+        self.last_gaze_blink: float = 0.0
         self._blink_since: Optional[float] = None
         self._blink_fired = False
 
@@ -434,10 +436,12 @@ class TrackingEngine(threading.Thread):
         s = self.settings
         self._face_frames += 1
         self.last_gaze_offset = m.offset
+        self.last_gaze_head = m.head
+        self.last_gaze_blink = m.blink
         left, top, width, height = self._desktop_rect(now)
         paused = self.output.paused
 
-        screen_pt = self.gaze_calibration.apply(m.offset)
+        screen_pt = self.gaze_calibration.apply(m.offset, m.head)
         if screen_pt is None:
             self.dwell.reset()
             self._blink_since = None

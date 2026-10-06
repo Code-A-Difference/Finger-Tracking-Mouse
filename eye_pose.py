@@ -33,6 +33,7 @@ RIGHT_EYE = {"outer": 33, "inner": 133, "top": 159, "bottom": 145}
 LEFT_EYE = {"outer": 263, "inner": 362, "top": 386, "bottom": 374}
 RIGHT_IRIS = 468
 LEFT_IRIS = 473
+NOSE_TIP = 1
 
 # ARKit-compatible blendshape names MediaPipe's face blendshapes use.
 BLINK_LEFT = "eyeBlinkLeft"
@@ -68,6 +69,11 @@ class EyeMeasure:
     blink_right: float
     blink: float                  # max of the two — either eye closing counts as a blink
     scale: float                  # inter-ocular distance, in frame-height units
+    # Where the nose tip sits relative to the middle of the eyes, in
+    # inter-ocular distances: a cheap, steady stand-in for head turn (x) and
+    # nod (y). Calibration uses it so a small head movement no longer throws
+    # the pointer across the screen.
+    head: tuple[float, float] = (0.0, 0.0)
 
 
 def measure(landmarks: Sequence[Any], blendshapes: dict[str, float], aspect: float) -> Optional[EyeMeasure]:
@@ -95,6 +101,13 @@ def measure(landmarks: Sequence[Any], blendshapes: dict[str, float], aspect: flo
     inter_ocular = ((eye_l[0] - eye_r[0]) * aspect) ** 2 + (eye_l[1] - eye_r[1]) ** 2
     scale = max(inter_ocular ** 0.5, sum(scales) / len(scales), 1e-4)
 
+    head = (0.0, 0.0)
+    iod = inter_ocular ** 0.5
+    if iod > 1e-4 and len(pts) > NOSE_TIP:
+        mid = ((eye_l[0] + eye_r[0]) / 2, (eye_l[1] + eye_r[1]) / 2)
+        nose = pts[NOSE_TIP]
+        head = ((nose[0] - mid[0]) * aspect / iod, (nose[1] - mid[1]) / iod)
+
     bl = max(0.0, min(1.0, blendshapes.get(BLINK_LEFT, 0.0)))
     br = max(0.0, min(1.0, blendshapes.get(BLINK_RIGHT, 0.0)))
-    return EyeMeasure(offset=(ox, oy), blink_left=bl, blink_right=br, blink=max(bl, br), scale=scale)
+    return EyeMeasure(offset=(ox, oy), blink_left=bl, blink_right=br, blink=max(bl, br), scale=scale, head=head)
