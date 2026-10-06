@@ -46,7 +46,7 @@ try:
     from camera import CameraCapabilities, CameraInfo, OpenCVCamera, list_cameras, probe_camera_indices, \
         probe_resolutions, validate_stream_url
     from diagnostics import Heartbeat, Watchdog, setup_logging
-    from gesture_state import GazeCalibration
+    from gesture_state import GazeCalibration, steady_reading
     from pointer_output import PointerOutput, create_backend
     from tracking_engine import TrackingEngine
 except ImportError as exc:
@@ -148,20 +148,79 @@ class HaloOverlay(QWidget):
         p.drawEllipse(center, 3, 3)
 
 
-class CalibrationDialog(QDialog):
-    """Look at nine dots in turn; fits gaze -> screen from what the eye
-    tracker saw while each one was up.
+def halo_diameter(settings: Settings) -> int:
+    """The halo's size. In eye mode it is a third of the hand-mode size:
+    a wide ring around a gaze point hides where it actually is, and the gaze
+    jitter makes a big ring swim, so the point looks less accurate than it is."""
+    if settings.tracking_mode == "eye":
+        return max(12, settings.halo_size // 3)
+    return settings.halo_size
 
-    Needs eye tracking already running (MainWindow checks before opening
-    this): it reads ``engine.last_gaze_offset`` on a timer, the same way the
-    main window reads ``engine.view`` — nothing here touches the tracking
-    thread directly.
+
+class CalibrationTarget(QWidget):
+    """The thing to look at while calibrating.
+
+    A big ring that shrinks onto a tiny centre point. A plain dot gives the
+    eye a 28-pixel area to rest anywhere in, and every pixel of that slop
+    became calibration error. A shrinking ring pulls the eye to one exact
+    point, and sampling only starts once it has closed.
     """
 
-    POINTS = [(0.1, 0.1), (0.5, 0.1), (0.9, 0.1), (0.1, 0.5), (0.5, 0.5),
-              (0.9, 0.5), (0.1, 0.9), (0.5, 0.9), (0.9, 0.9)]
-    SETTLE_MS = 700     # give the eye time to actually get there before sampling
-    SAMPLE_MS = 500     # then collect readings for this long
+    START, END = 64, 10
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setFixedSize(self.START + 8, self.START + 8)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._t = 0.0          # 0 = ring at full size, 1 = closed
+        self.sampling = False
+
+    def set_progress(self, t: float) -> None:
+        self._t = max(0.0, min(1.0, t))
+        self.update()
+
+    def paintEvent(self, _event: Any) -> None:  # noqa: N802 (Qt name)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        c = QPoint(self.width() // 2, self.height() // 2)
+        ease = 1 - (1 - self._t) ** 3
+        r = (self.START + (self.END - self.START) * ease) / 2
+        ring = QColor(34, 211, 238) if not self.sampling else QColor(74, 222, 128)
+        ring.setAlpha(230)
+        p.setPen(QPen(ring, 2.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(c, int(r), int(r))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255))
+        p.drawEllipse(c, 2, 2)          # the exact point to look at: 4 px
+
+
+class CalibrationDialog(QDialog):
+    """Look at thirteen points in turn; fits gaze -> screen from what the eye
+    tracker saw while each one was up.
+
+    Thirteen, not nine: the 3x3 grid out near the edges, plus four points
+    between it and the centre, where most of what you look at actually is.
+    Each point is held until its ring closes, then sampled for a second;
+    blink frames are thrown away and the median taken (steady_reading), so a
+    blink or a glance doesn't skew it. A point that couldn't be read is
+    shown again. At the end the fit's own error is reported, so you know
+    whether to redo it.
+
+    Needs eye tracking already running (MainWindow checks before opening
+    this): it reads the engine's last gaze values on a timer, the same way
+    the main window reads ``engine.view`` — nothing here touches the
+    tracking thread directly.
+    """
+
+    POINTS = [(0.5, 0.5),
+              (0.05, 0.05), (0.5, 0.05), (0.95, 0.05),
+              (0.95, 0.5), (0.95, 0.95), (0.5, 0.95),
+              (0.05, 0.95), (0.05, 0.5),
+              (0.275, 0.275), (0.725, 0.275), (0.725, 0.725), (0.275, 0.725)]
+    SETTLE_MS = 1000    # the ring closes over this long; the eye gets there
+    SAMPLE_MS = 1000    # then readings are collected for this long
+    RETRIES = 1         # a point that couldn't be read is shown once more
 
     def __init__(self, main: "MainWindow") -> None:
         super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
@@ -170,26 +229,22 @@ class CalibrationDialog(QDialog):
         left, top, width, height = main.output.backend.desktop_rect(main.settings.screen)
         self.setGeometry(left, top, width, height)
         self.setStyleSheet("background: #05070d;")
-        self.samples: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        self.samples: list[tuple] = []
+        self.accuracy: Optional[float] = None    # mean error, fraction of the screen
         self._index = 0
-        self._readings: list[tuple[float, float]] = []
+        self._retried = 0
+        self._readings: list[tuple] = []
+        self._phase_start = 0.0
 
         self.hint = QLabel(self)
         self.hint.setStyleSheet("color: #aebbd0; font-size: 15px; background: transparent;")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.hint.setGeometry(0, height - 60, width, 40)
+        self.hint.setGeometry(0, height // 2 + 80, width, 60)
+        self.hint.setWordWrap(True)
 
-        self.dot = QLabel(self)
-        self.dot.setFixedSize(28, 28)
-        self.dot.setStyleSheet("background: #22d3ee; border-radius: 14px; border: 3px solid white;")
-
-        self._settle = QTimer(self, singleShot=True, interval=self.SETTLE_MS)
-        self._settle.timeout.connect(self._start_sampling)
-        self._sample_timer = QTimer(self, interval=33)
-        self._sample_timer.timeout.connect(self._sample)
-        self._finish_sample = QTimer(self, singleShot=True, interval=self.SAMPLE_MS)
-        self._finish_sample.timeout.connect(self._next_point)
-
+        self.target = CalibrationTarget(self)
+        self._tick = QTimer(self, interval=16)
+        self._tick.timeout.connect(self._step)
         self._show_point()
 
     def keyPressEvent(self, event: Any) -> None:  # noqa: N802 (Qt name)
@@ -200,30 +255,47 @@ class CalibrationDialog(QDialog):
 
     def _show_point(self) -> None:
         fx, fy = self.POINTS[self._index]
-        x = int(fx * self.width()) - self.dot.width() // 2
-        y = int(fy * self.height()) - self.dot.height() // 2
-        self.dot.move(x, y)
-        self.dot.show()
-        self.hint.setText(f"Look at the dot… {self._index + 1} of {len(self.POINTS)}. Esc cancels.")
+        x = int(fx * self.width()) - self.target.width() // 2
+        y = int(fy * self.height()) - self.target.height() // 2
+        self.target.move(x, y)
+        self.target.sampling = False
+        self.target.set_progress(0)
+        self.target.show()
+        # keep the instructions out from under the point being looked at
+        self.hint.move(0, self.height() // 2 - 140 if fy > 0.6 else self.height() // 2 + 80)
+        again = " Keep your eyes open and on the centre." if self._retried else ""
+        self.hint.setText(f"Follow the ring to its centre and keep looking there — {self._index + 1} of "
+                          f"{len(self.POINTS)}. Keep your head still. Esc cancels.{again}")
         self._readings = []
-        self._settle.start()
+        self._phase_start = time.monotonic()
+        self._tick.start()
 
-    def _start_sampling(self) -> None:
-        self._sample_timer.start()
-        self._finish_sample.start()
-
-    def _sample(self) -> None:
+    def _step(self) -> None:
+        elapsed = (time.monotonic() - self._phase_start) * 1000
+        if elapsed < self.SETTLE_MS:
+            self.target.set_progress(elapsed / self.SETTLE_MS)
+            return
+        if not self.target.sampling:
+            self.target.sampling = True
+            self.target.set_progress(1)
         engine = self.main.engine
         offset = engine.last_gaze_offset if engine is not None else None
         if offset is not None:
-            self._readings.append(offset)
+            self._readings.append((offset, engine.last_gaze_head, engine.last_gaze_blink))
+        if elapsed >= self.SETTLE_MS + self.SAMPLE_MS:
+            self._tick.stop()
+            self._next_point()
 
     def _next_point(self) -> None:
-        self._sample_timer.stop()
-        if self._readings:
-            ox = sum(o[0] for o in self._readings) / len(self._readings)
-            oy = sum(o[1] for o in self._readings) / len(self._readings)
-            self.samples.append(((ox, oy), self.POINTS[self._index]))
+        reading = steady_reading(self._readings)
+        if reading is None and self._retried < self.RETRIES:
+            self._retried += 1
+            self._show_point()
+            return
+        if reading is not None:
+            offset, head = reading
+            self.samples.append((offset, self.POINTS[self._index], head))
+        self._retried = 0
         self._index += 1
         if self._index >= len(self.POINTS):
             self._finish()
@@ -231,20 +303,21 @@ class CalibrationDialog(QDialog):
             self._show_point()
 
     def _finish(self) -> None:
-        self.dot.hide()
-        if len(self.samples) < GazeCalibration.MIN_SAMPLES:
+        self.target.hide()
+        if len(self.samples) < 9:
             QMessageBox.warning(self, "Calibration incomplete",
-                "Finger Mouse couldn't see your eyes for enough of that. Make sure your face is well lit "
-                "and centred in the camera, then try again.")
+                "Finger Mouse couldn't see your eyes clearly for enough of the points. Make sure your face "
+                "is well lit and centred in the camera, then try again.")
             self.reject()
             return
         cal = GazeCalibration()
         if not cal.fit(self.samples):
             QMessageBox.warning(self, "Calibration didn't take",
                 "That didn't produce a usable mapping. Try again, keeping your head still and looking "
-                "only at each dot as it appears.")
+                "only at the centre of each ring.")
             self.reject()
             return
+        self.accuracy = cal.error(self.samples)
         self.main.change_settings(eye_calibration=cal.to_json())
         self.accept()
 
@@ -728,7 +801,7 @@ class MainWindow(QMainWindow):
         self._notice: Optional[tuple[str, str, float]] = None   # (chip, text, until)
 
         self.overlay = HaloOverlay()
-        self.overlay.set_diameter(self.settings.halo_size)
+        self.overlay.set_diameter(halo_diameter(self.settings))
         self.watchdog = Watchdog()
         self.watchdog.watch(Heartbeat("ui", self._ui_busy_since, 0.6, "window not responding"))
         self.watchdog.start()
@@ -905,7 +978,7 @@ class MainWindow(QMainWindow):
         old = self.settings
         self.settings = new
         self.save_timer.start()
-        self.overlay.set_diameter(new.halo_size)
+        self.overlay.set_diameter(halo_diameter(new))
         self.diag.setVisible(new.show_diagnostics)
         if new.verbose_logging != old.verbose_logging:
             logging.getLogger().setLevel(logging.DEBUG if new.verbose_logging else logging.INFO)
@@ -941,7 +1014,16 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if self.settings_dialog is not None:
                 self.settings_dialog.load(self.settings)
-            QMessageBox.information(self, "Calibrated", "Eye tracking is calibrated. Look around to try it.")
+            err = dialog.accuracy
+            if err is None:
+                note = "Look around to try it."
+            else:
+                screen = QGuiApplication.primaryScreen().size()
+                px = int(err * (screen.width() ** 2 + screen.height() ** 2) ** 0.5 / 1.414)
+                quality = ("Great" if err < 0.04 else "Good" if err < 0.07 else "Rough — try calibrating again with "
+                           "your head still and the room well lit")
+                note = f"Average error: about {err * 100:.1f}% of the screen (~{px} px). {quality}."
+            QMessageBox.information(self, "Calibrated", f"Eye tracking is calibrated. {note}")
 
     # -- cameras ----------------------------------------------------------------
     def refresh_cameras(self) -> None:

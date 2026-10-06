@@ -19,6 +19,7 @@ frame by frame without a webcam:
 * ``GazeCalibration``   — fits a raw gaze offset (eye_pose.py) to screen
                           coordinates from a short look-at-these-dots
                           calibration, and applies it afterwards.
+* ``steady_reading``    — one calibration dot's frames -> one robust reading.
 * ``DwellClick``        — eye-tracking's click: hold the (calibrated, smoothed)
                           gaze still over one spot for a moment.
 
@@ -526,21 +527,29 @@ class GazeCalibration:
     """Maps a raw gaze offset (eye_pose.EyeMeasure.offset) to a normalised
     (0–1) screen position.
 
-    A classic six-term second-degree polynomial in the two offset axes
-    (``1, x, y, xy, x², y²`` for each of screen-x and screen-y), the standard
-    simple mapping for webcam eye tracking: it bends enough to follow how an
-    eyeball's rotation maps onto a flat screen, without enough free
-    parameters to overfit a short calibration. Fit by least squares (the
-    normal equations, solved directly — nine calibration points and six
-    terms, no need for numpy here), so a slightly misjudged dot averages out
-    rather than distorting the whole mapping.
+    A second-degree polynomial in the two offset axes (``1, x, y, xy, x²,
+    y²``), the standard simple mapping for webcam eye tracking: it bends
+    enough to follow how an eyeball's rotation maps onto a flat screen. When
+    the calibration also recorded where the head was (``EyeMeasure.head``),
+    two more terms add the head's turn and nod, so moving your head a little
+    after calibrating shifts the mapping with you instead of sending the
+    pointer somewhere else.
+
+    Fit by least squares with a touch of ridge regularisation (the normal
+    equations, solved directly — no numpy needed for 8 unknowns): a dot you
+    glanced away from averages out instead of bending the whole mapping, and
+    a calibration where you barely moved your eyes can't blow up into wild
+    coefficients.
     """
 
     MIN_SAMPLES = 6
+    RIDGE = 1e-4
 
     def __init__(self) -> None:
         self.coeffs_x: Optional[list[float]] = None
         self.coeffs_y: Optional[list[float]] = None
+        self.use_head = False
+        self.head_ref: tuple[float, float] = (0.0, 0.0)
 
     @property
     def is_calibrated(self) -> bool:
@@ -549,43 +558,83 @@ class GazeCalibration:
     def reset(self) -> None:
         self.coeffs_x = None
         self.coeffs_y = None
+        self.use_head = False
+        self.head_ref = (0.0, 0.0)
+
+    def _terms(self, offset: tuple[float, float], head: Optional[tuple[float, float]] = None) -> list[float]:
+        x, y = offset
+        base = [1.0, x, y, x * y, x * x, y * y]
+        if not self.use_head:
+            return base
+        hx, hy = head if head is not None else self.head_ref
+        return base + [hx - self.head_ref[0], hy - self.head_ref[1]]
 
     @staticmethod
-    def _terms(offset: tuple[float, float]) -> list[float]:
-        x, y = offset
-        return [1.0, x, y, x * y, x * x, y * y]
+    def _split(sample):
+        """A sample is (offset, target) or (offset, target, head)."""
+        if len(sample) == 3:
+            return sample[0], sample[1], sample[2]
+        return sample[0], sample[1], None
 
-    def fit(self, samples: Sequence[tuple[tuple[float, float], tuple[float, float]]]) -> bool:
-        """``samples``: [(gaze_offset, (screen_x, screen_y)), ...], both 0–1
-        or -1..1 as produced by eye_pose. Returns whether it took."""
+    def fit(self, samples: Sequence[tuple]) -> bool:
+        """``samples``: [(gaze_offset, (screen_x, screen_y)[, head]), ...].
+        Returns whether it took."""
         if len(samples) < self.MIN_SAMPLES:
             return False
-        terms = [self._terms(offset) for offset, _ in samples]
+        parts = [self._split(s) for s in samples]
+        heads = [h for _, _, h in parts]
+        use_head = all(h is not None for h in heads) and len(samples) >= 9
+        head_ref = ((sum(h[0] for h in heads) / len(heads), sum(h[1] for h in heads) / len(heads))
+                    if use_head else (0.0, 0.0))
+
+        # fit with the candidate setting, then commit it only if it solved
+        prev = (self.use_head, self.head_ref)
+        self.use_head, self.head_ref = use_head, head_ref
+        terms = [self._terms(o, h) for o, _, h in parts]
         n = len(terms[0])
         ata = [[sum(row[i] * row[j] for row in terms) for j in range(n)] for i in range(n)]
-        atx = [sum(row[i] * target[0] for row, (_, target) in zip(terms, samples)) for i in range(n)]
-        aty = [sum(row[i] * target[1] for row, (_, target) in zip(terms, samples)) for i in range(n)]
+        for i in range(1, n):                  # never shrink the constant term
+            ata[i][i] += self.RIDGE * len(terms)
+        atx = [sum(row[i] * t[0] for row, (_, t, _) in zip(terms, parts)) for i in range(n)]
+        aty = [sum(row[i] * t[1] for row, (_, t, _) in zip(terms, parts)) for i in range(n)]
         cx = _solve(ata, atx)
         cy = _solve(ata, aty)
         if cx is None or cy is None:
+            self.use_head, self.head_ref = prev
             return False
         self.coeffs_x, self.coeffs_y = cx, cy
         return True
 
-    def apply(self, offset: tuple[float, float]) -> Optional[tuple[float, float]]:
+    def apply(self, offset: tuple[float, float], head: Optional[tuple[float, float]] = None) -> Optional[tuple[float, float]]:
         """The screen position (clamped 0–1) this offset maps to, or None
         before calibration."""
         if not self.is_calibrated:
             return None
-        terms = self._terms(offset)
+        terms = self._terms(offset, head)
         x = sum(c * t for c, t in zip(self.coeffs_x, terms))
         y = sum(c * t for c, t in zip(self.coeffs_y, terms))
         return (max(0.0, min(1.0, x)), max(0.0, min(1.0, y)))
 
+    def error(self, samples: Sequence[tuple]) -> Optional[float]:
+        """Average distance, as a fraction of the screen, between where each
+        calibration dot was and where the fit puts that gaze. What the
+        calibration dialog reports as accuracy."""
+        if not self.is_calibrated or not samples:
+            return None
+        total = 0.0
+        for s in samples:
+            o, t, h = self._split(s)
+            p = self.apply(o, h)
+            total += math.hypot(p[0] - t[0], p[1] - t[1])
+        return total / len(samples)
+
     def to_json(self) -> str:
         if not self.is_calibrated:
             return ""
-        return json.dumps({"x": self.coeffs_x, "y": self.coeffs_y})
+        data = {"x": self.coeffs_x, "y": self.coeffs_y}
+        if self.use_head:
+            data["head"] = list(self.head_ref)
+        return json.dumps(data)
 
     @classmethod
     def from_json(cls, text: str) -> "GazeCalibration":
@@ -595,12 +644,42 @@ class GazeCalibration:
         try:
             data = json.loads(text)
             x, y = data["x"], data["y"]
-            if (isinstance(x, list) and isinstance(y, list) and len(x) == len(y) == 6
+            head = data.get("head")
+            n = 8 if head is not None else 6
+            if (isinstance(x, list) and isinstance(y, list) and len(x) == len(y) == n
                     and all(isinstance(v, (int, float)) for v in x + y)):
+                if head is not None:
+                    if not (isinstance(head, list) and len(head) == 2 and all(isinstance(v, (int, float)) for v in head)):
+                        return cal
+                    cal.use_head = True
+                    cal.head_ref = (float(head[0]), float(head[1]))
                 cal.coeffs_x, cal.coeffs_y = [float(v) for v in x], [float(v) for v in y]
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+        except (TypeError, ValueError, KeyError, AttributeError, json.JSONDecodeError):
             pass
         return cal
+
+
+def steady_reading(readings: Sequence[tuple], blink_limit: float = 0.35) -> Optional[tuple]:
+    """One calibration dot's worth of frames -> a single (offset, head).
+
+    ``readings``: [(offset, head, blink), ...]. Frames taken mid-blink are
+    dropped (a closing lid drags the iris landmark down), then the per-axis
+    *median* is used rather than the mean, so a quick glance elsewhere or a
+    tracking glitch doesn't pull the dot's value off. None if too few usable
+    frames were left to trust.
+    """
+    usable = [r for r in readings if r[2] < blink_limit]
+    if len(usable) < 5:
+        return None
+
+    def med(values: list[float]) -> float:
+        v = sorted(values)
+        mid = len(v) // 2
+        return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2
+
+    offset = (med([r[0][0] for r in usable]), med([r[0][1] for r in usable]))
+    head = (med([r[1][0] for r in usable]), med([r[1][1] for r in usable]))
+    return offset, head
 
 
 class DwellClick:

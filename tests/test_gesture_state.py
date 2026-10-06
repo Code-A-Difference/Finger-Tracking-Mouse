@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from gesture_state import DwellClick, GazeCalibration, HeldPose, OneEuroFilter, PinchGesture, PointerFilter, \
+from gesture_state import DwellClick, GazeCalibration, steady_reading, HeldPose, OneEuroFilter, PinchGesture, PointerFilter, \
     PointerStabilizer, ScrollGesture
 
 DT = 1 / 30
@@ -339,9 +339,9 @@ def test_gaze_calibration_fits_a_grid_and_interpolates_between_points():
     assert cal.is_calibrated
 
     got = cal.apply((0.8, -0.8))          # a calibration point: recovered almost exactly
-    want = true_screen((0.8, -0.8))
-    assert abs(got[0] - want[0]) < 1e-6
-    assert abs(got[1] - want[1]) < 1e-6
+    want = true_screen((0.8, -0.8))       # (the ridge costs a hair: well under 0.1% of the screen)
+    assert abs(got[0] - want[0]) < 1e-3
+    assert abs(got[1] - want[1]) < 1e-3
 
     got = cal.apply((0.4, 0.2))           # a point it never saw: interpolated closely
     want = true_screen((0.4, 0.2))
@@ -448,3 +448,61 @@ def test_dwell_progress_climbs_then_drops_back_to_zero_after_firing():
         progress.append(d.progress(t))
     assert progress[0] < progress[5] < progress[10]
     assert progress[-1] == 0.0   # fired partway through; armed=False reads as no progress
+
+
+def _thirteen_points():
+    return [(fx, fy) for fx in (0.05, 0.5, 0.95) for fy in (0.05, 0.5, 0.95)] +            [(0.275, 0.275), (0.725, 0.275), (0.275, 0.725), (0.725, 0.725)]
+
+
+def test_gaze_calibration_follows_the_head_when_head_was_recorded():
+    # Truth: the screen point depends on where the eye sits in its socket AND
+    # on head turn. A head-blind fit gets this wrong as soon as the head moves.
+    def screen(offset, head):
+        return (0.5 + 0.45 * offset[0] + 0.3 * head[0], 0.5 + 0.45 * offset[1] + 0.3 * head[1])
+
+    samples = []
+    for i, (tx, ty) in enumerate(_thirteen_points()):
+        head = (0.05 * ((i % 3) - 1), 0.04 * ((i % 2) * 2 - 1))     # the head wanders a little between dots
+        offset = ((tx - 0.5 - 0.3 * head[0]) / 0.45, (ty - 0.5 - 0.3 * head[1]) / 0.45)
+        samples.append((offset, (tx, ty), head))
+    cal = GazeCalibration()
+    assert cal.fit(samples) is True
+    assert cal.use_head
+    assert cal.error(samples) < 0.005
+
+    moved = (0.08, -0.06)                                            # later, the head has turned
+    off = (0.2, -0.3)
+    got, want = cal.apply(off, moved), screen(off, moved)
+    assert abs(got[0] - want[0]) < 0.01 and abs(got[1] - want[1]) < 0.01
+
+    blind = GazeCalibration()
+    blind.fit([(o, t) for o, t, _ in samples])
+    assert not blind.use_head
+    b = blind.apply(off)
+    assert abs(b[0] - want[0]) > abs(got[0] - want[0])               # ignoring the head is worse
+
+
+def test_head_aware_calibration_round_trips_and_old_six_term_ones_still_load():
+    samples = [((tx - 0.5, ty - 0.5), (tx, ty), (0.01 * i, -0.01 * i)) for i, (tx, ty) in enumerate(_thirteen_points())]
+    cal = GazeCalibration()
+    cal.fit(samples)
+    again = GazeCalibration.from_json(cal.to_json())
+    assert again.use_head and again.head_ref == cal.head_ref
+    a, b = cal.apply((0.1, 0.2), (0.03, 0.0)), again.apply((0.1, 0.2), (0.03, 0.0))
+    assert abs(a[0] - b[0]) < 1e-9 and abs(a[1] - b[1]) < 1e-9
+
+    old = '{"x": [0.5, 0.4, 0, 0, 0, 0], "y": [0.5, 0, 0.4, 0, 0, 0]}'
+    legacy = GazeCalibration.from_json(old)
+    assert legacy.is_calibrated and not legacy.use_head
+    assert legacy.apply((0.0, 0.0), (0.5, 0.5)) == (0.5, 0.5)       # head is ignored for an old calibration
+    assert not GazeCalibration.from_json('{"x": [1,2,3,4,5,6,7,8], "y": [1,2,3,4,5,6,7,8], "head": "x"}').is_calibrated
+
+
+def test_steady_reading_drops_blinks_and_ignores_a_glance():
+    frames = [((0.20, -0.10), (0.0, 0.0), 0.05)] * 12
+    frames += [((0.20, 0.60), (0.0, 0.0), 0.9)] * 4          # a blink drags the iris down
+    frames += [((-0.70, 0.40), (0.0, 0.0), 0.05)] * 2        # a glance elsewhere
+    offset, head = steady_reading(frames)
+    assert offset == (0.20, -0.10)
+    assert steady_reading([((0, 0), (0, 0), 0.9)] * 20) is None       # all blinks: no reading
+    assert steady_reading([((0, 0), (0, 0), 0.0)] * 3) is None        # too few frames

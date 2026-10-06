@@ -94,3 +94,14 @@ def test_out_of_range_blendshape_scores_are_clamped():
     m = eye_pose.measure(landmarks(), {"eyeBlinkLeft": 1.4, "eyeBlinkRight": -0.3}, 1.0)
     assert m.blink_left == 1.0
     assert m.blink_right == 0.0
+
+
+def test_head_turn_is_measured_from_the_nose_between_the_eyes():
+    pts = landmarks()
+    pts[eye_pose.NOSE_TIP] = L(0.5, 0.65)               # straight on: nose below the middle of the eyes
+    straight = eye_pose.measure(pts, {}, 1.0).head
+    assert abs(straight[0]) < 1e-9 and straight[1] > 0
+    pts[eye_pose.NOSE_TIP] = L(0.56, 0.65)              # head turned: the nose swings sideways
+    turned = eye_pose.measure(pts, {}, 1.0).head
+    assert turned[0] > 0.1
+    assert abs(turned[1] - straight[1]) < 1e-9

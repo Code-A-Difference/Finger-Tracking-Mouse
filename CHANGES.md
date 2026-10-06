@@ -1,5 +1,26 @@
 # What changed
 
+## Unreleased
+
+### Eye tracking accuracy
+- **Calibration uses 13 points, not 9**: the 3x3 grid now sits nearer the
+  screen edges, with four more points between it and the centre, where most
+  of what you look at is.
+- **A shrinking ring instead of a dot.** The old 28-pixel dot let your eyes
+  rest anywhere on it, and every pixel of that became error. The ring closes
+  onto a 4-pixel centre, and sampling starts only once it has.
+- **Blinks and glances no longer skew a point.** Blink frames are dropped
+  and the median of the rest is used; a point that couldn't be read is
+  shown again.
+- **Head movement is part of the mapping.** Calibration records where your
+  head is (nose relative to the eyes) and the fit uses it, so a small head
+  turn after calibrating no longer throws the pointer across the screen.
+  Older calibrations still load and work as before; recalibrate to get this.
+- **You're told how accurate it came out** (average error as % of the
+  screen and roughly in pixels), so you know whether to redo it.
+- **A smaller ring follows your gaze** in eye mode (a third of the hand-mode
+  halo), with a sharp centre point.
+
 ## 2.3.0
 
 ### Eye tracking
