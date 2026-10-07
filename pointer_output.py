@@ -58,6 +58,9 @@ class PointerBackend:
         self.button(True, x, y)
         self.button(False, x, y)
 
+    def right_click(self, x: int, y: int) -> None:
+        raise NotImplementedError
+
     def wheel(self, notches: float) -> float:
         """Scroll by up to ``notches``; return how much was actually sent.
         Backends that only do whole steps send what they can and the rest
@@ -75,6 +78,7 @@ class WindowsBackend(PointerBackend):
     name = "windows-sendinput"
     INPUT_MOUSE = 0
     MOVE, LEFTDOWN, LEFTUP, WHEEL = 0x0001, 0x0002, 0x0004, 0x0800
+    RIGHTDOWN, RIGHTUP = 0x0008, 0x0010
     VIRTUALDESK, ABSOLUTE = 0x4000, 0x8000
     WHEEL_DELTA = 120
     WHEEL_STEP = 30   # send quarter-notches: smooth, and every app understands it
@@ -165,6 +169,9 @@ class WindowsBackend(PointerBackend):
     def click(self, x: int, y: int) -> None:
         self._send(self._move_input(x, y), self._mouse(self.LEFTDOWN), self._mouse(self.LEFTUP))
 
+    def right_click(self, x: int, y: int) -> None:
+        self._send(self._move_input(x, y), self._mouse(self.RIGHTDOWN), self._mouse(self.RIGHTUP))
+
     def wheel(self, notches: float) -> float:
         self._wheel_carry += notches * self.WHEEL_DELTA
         steps = int(self._wheel_carry / self.WHEEL_STEP)
@@ -219,9 +226,9 @@ class MacBackend(PointerBackend):
         loc = self.Q.CGEventGetLocation(self.Q.CGEventCreate(None))
         return (int(loc.x), int(loc.y))
 
-    def _post(self, kind: int, x: int, y: int, click_count: int = 0) -> None:
+    def _post(self, kind: int, x: int, y: int, click_count: int = 0, button: Optional[int] = None) -> None:
         Q = self.Q
-        event = Q.CGEventCreateMouseEvent(None, kind, (x, y), Q.kCGMouseButtonLeft)
+        event = Q.CGEventCreateMouseEvent(None, kind, (x, y), Q.kCGMouseButtonLeft if button is None else button)
         if event is None:
             raise OSError("macOS refused to create a mouse event (check Accessibility permission)")
         if click_count:
@@ -246,6 +253,12 @@ class MacBackend(PointerBackend):
         Q = self.Q
         count = self._count_for(x, y) if down else max(1, self._click_count)
         self._post(Q.kCGEventLeftMouseDown if down else Q.kCGEventLeftMouseUp, x, y, count)
+
+    def right_click(self, x: int, y: int) -> None:
+        Q = self.Q
+        self._post(Q.kCGEventMouseMoved, x, y)
+        self._post(Q.kCGEventRightMouseDown, x, y, 1, Q.kCGMouseButtonRight)
+        self._post(Q.kCGEventRightMouseUp, x, y, 1, Q.kCGMouseButtonRight)
 
     def wheel(self, notches: float) -> float:
         Q = self.Q
@@ -298,6 +311,9 @@ class PyAutoGUIBackend(PointerBackend):
 
     def button(self, down: bool, x: int, y: int, click_count: int = 1) -> None:
         (self.p.mouseDown if down else self.p.mouseUp)(x=x, y=y, button="left", _pause=False)
+
+    def right_click(self, x: int, y: int) -> None:
+        self.p.click(x=x, y=y, button="right", _pause=False)
 
     def wheel(self, notches: float) -> float:
         self._wheel_carry += notches
@@ -383,6 +399,9 @@ class PointerOutput(threading.Thread):
 
     def click(self, x: int, y: int) -> None:
         self._put(_Command("click", x, y))
+
+    def right_click(self, x: int, y: int) -> None:
+        self._put(_Command("right_click", x, y))
 
     def press(self, x: int, y: int) -> None:
         self._put(_Command("press", x, y))
@@ -486,6 +505,9 @@ class PointerOutput(threading.Thread):
                 self._verify(c.x, c.y)
         elif c.kind == "click":
             b.click(c.x, c.y)
+            self._last_set = (c.x, c.y)
+        elif c.kind == "right_click":
+            b.right_click(c.x, c.y)
             self._last_set = (c.x, c.y)
         elif c.kind == "press":
             b.move(c.x, c.y, False)

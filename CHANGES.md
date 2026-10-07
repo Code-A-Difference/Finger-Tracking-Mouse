@@ -1,5 +1,25 @@
 # What changed
 
+## Unreleased
+
+### Head pointer — a third tracking mode
+- **Steer with your nose, click with winks.** Settings → Pointer → Tracking
+  mode → Head pointer; its own Settings tab. No calibration.
+- The nose tip is used because it's the most rigid point on a face, and it's
+  measured in face widths, so the speed doesn't change with distance from the
+  camera. Two styles: *Like a mouse* (relative, with acceleration — the
+  default) and *Point at the spot* (absolute, with Re-centre). One Euro
+  smoothing plus a dead zone for tremor and breathing.
+- **Left wink = left click, right wink = right click**, held for a moment
+  (adjustable). Two-eyed blinks never click; the pointer freezes while an eye
+  is closing so the click lands where you aimed. A long-blink option for
+  anyone who can't wink one eye.
+- **Mouth open** drags (button held while open), scrolls (nod while open) or
+  clicks; **a held smile** can pause/resume, double-click or right-click.
+  Both need a short hold and have hysteresis, so talking or a passing grin
+  doesn't trigger them.
+- Right-click support added to the pointer output on Windows, macOS and Linux.
+
 ## 2.5.0
 
 ### Eye tracking: a much more thorough calibration

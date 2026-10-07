@@ -336,3 +336,38 @@ def test_hide_gesture_only_when_enabled():
     _, output, events, *_ = run([hand(extended=("middle",)) for _ in range(60)], settings=on)
     assert ("hide_requested", "minimize") in events
     assert not output.button_down
+
+
+# -- head pointer -------------------------------------------------------------
+
+def test_head_mode_steers_with_the_nose_winks_to_click_and_drags_with_the_mouth():
+    from test_head import face
+
+    settings = Settings(tracking_mode="head", head_smoothing=0, head_dead_zone=0, head_wink_ms=100)
+    frames = [[face(nose=(0.5, 0.55)), {}]] * 5
+    frames += [[face(nose=(0.5 + 0.004 * i, 0.55)), {}] for i in range(1, 21)]          # turn right
+    held = face(nose=(0.58, 0.55))
+    # a wink with the person's right eye: in the mirrored picture MediaPipe calls it the face's left
+    frames += [[held, {"eyeBlinkLeft": 0.9, "eyeBlinkRight": 0.05}]] * 8 + [[held, {}]] * 3
+    frames += [[held, {"eyeBlinkLeft": 0.9, "eyeBlinkRight": 0.9}]] * 8 + [[held, {}]] * 3   # a blink: nothing
+    frames += [[held, {"jawOpen": 0.7}]] * 6                                                # mouth open: press
+    frames += [[face(nose=(0.58 - 0.004 * i, 0.55)), {"jawOpen": 0.7}] for i in range(1, 11)]   # drag left
+    frames += [[face(nose=(0.54, 0.55)), {}]] * 4                                           # close: drop
+    calls, output, events, *_ = run(frames, settings=settings)
+
+    xs = [c[1] for c in of(calls, "move")]
+    assert xs and max(xs) > xs[0] + 50, "turning the head didn't move the pointer right"
+    assert len(of(calls, "right_click")) == 1, "a right-eye wink should right-click once"
+    assert not of(calls, "click_left_extra")
+    downs, ups = of(calls, "down"), of(calls, "up")
+    assert len(downs) == 1 and len(ups) == 1, "mouth open/close should press then release once"
+    assert ("gesture", "mouse_down") in events and ("gesture", "mouse_up") in events
+
+
+def test_head_mode_losing_the_face_drops_a_drag():
+    from test_head import face
+
+    settings = Settings(tracking_mode="head", head_smoothing=0)
+    frames = [[face(), {}]] * 3 + [[face(), {"jawOpen": 0.8}]] * 8 + [None] * 3
+    calls, *_ = run(frames, settings=settings)
+    assert len(of(calls, "down")) == 1 and len(of(calls, "up")) == 1

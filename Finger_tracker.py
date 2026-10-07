@@ -67,6 +67,7 @@ GESTURE_COLORS = {
     "paused": "#f87171", "hide": "#f87171", "no_hand": "#8290a6", "open": "#cbd5e1",
     "pointing": "#cbd5e1", "starting": "#8290a6",
     "gazing": "#cbd5e1", "dwelling": "#fbbf24", "no_face": "#8290a6", "uncalibrated": "#f87171",
+    "tracking": "#cbd5e1",
 }
 
 
@@ -476,7 +477,7 @@ class SettingsDialog(QDialog):
 
         tabs = QTabWidget()
         for build, name in ((self._pointer_tab, "Pointer"), (self._click_tab, "Click && drag"),
-                            (self._scroll_tab, "Scrolling"), (self._eye_tab, "Eye tracking"),
+                            (self._scroll_tab, "Scrolling"), (self._head_tab, "Head pointer"), (self._eye_tab, "Eye tracking"),
                             (self._camera_tab, "Camera"), (self._gestures_tab, "Hide gesture"),
                             (self._advanced_tab, "Advanced")):
             # Each page scrolls rather than squeezing its text when the window is short.
@@ -578,9 +579,10 @@ class SettingsDialog(QDialog):
     def _pointer_tab(self) -> QWidget:
         page, l = self._page()
         self._choice(l, "tracking_mode", "Tracking mode",
-                     [("hand", "Hand gestures"), ("eye", "Eye gaze (beta)")],
-                     "Move the pointer with a hand pinching to click, or by looking at the screen. "
-                     "The settings below are for hand mode; eye mode has its own tab.")
+                     [("hand", "Hand gestures"), ("head", "Head pointer (nose + winks)"), ("eye", "Eye gaze (beta)")],
+                     "Move the pointer with a hand pinching to click, by moving your head (the nose steers, "
+                     "winks click), or by looking at the screen. The settings below are for hand mode; the "
+                     "head pointer and eye gaze have their own tabs.")
         self._slider(l, "smoothing", "Smoothing", 0, 100, "{}%",
                      "Higher holds the pointer steadier; lower follows faster. Small hand tremors are "
                      "smoothed away more strongly than real movement.")
@@ -630,6 +632,48 @@ class SettingsDialog(QDialog):
         self._slider(l, "scroll_dead_zone", "Dead zone", 5, 60, "{}% of hand size",
                      "How far to move before scrolling starts, so small wobbles don't scroll.")
         self._check(l, "scroll_reverse", "Reverse direction")
+        l.addStretch(1)
+        return page
+
+    def _head_tab(self) -> QWidget:
+        page, l = self._page()
+        self._hint(l, "Steer with your nose — the steadiest point on a face, so talking or smiling doesn't move "
+                      "the pointer. Wink to click. No calibration needed: pick Head pointer under Pointer → "
+                      "Tracking mode and press Start.")
+        self._choice(l, "head_pointer_mode", "Movement",
+                     [("relative", "Like a mouse (recommended)"), ("absolute", "Point at the spot")],
+                     "Like a mouse: small, careful head movements are precise and a quick flick crosses the "
+                     "screen; turning back doesn't bring the pointer back. Point at the spot is simpler, but "
+                     "needs Re-centre if you shift in your seat.")
+        self._slider(l, "head_speed", "Speed", 1, 100, "{}%")
+        self._slider(l, "head_acceleration", "Acceleration", 0, 100, "{}%",
+                     "How much further a quick movement goes than a slow one (Like a mouse only).")
+        self._slider(l, "head_reach", "Turn to reach the edge", 10, 80, "{}% of face width",
+                     "Point at the spot only: smaller means less turning to reach the screen edges.")
+        self._slider(l, "head_dead_zone", "Steadiness", 0, 100, "{}%",
+                     "Head movement slower than this is ignored, so tremor or breathing doesn't drift the pointer.")
+        self._slider(l, "head_smoothing", "Smoothing", 0, 100, "{}%")
+        recentre = QPushButton("Re-centre now")
+        recentre.setToolTip("Point at the spot: makes where your head is now the centre. Like a mouse: puts the "
+                            "pointer in the middle of the screen.")
+        recentre.clicked.connect(self.main.recentre_head)
+        l.addWidget(recentre, 0, Qt.AlignmentFlag.AlignLeft)
+        l.addSpacing(6)
+        self._choice(l, "head_click", "Click with",
+                     [("wink", "A wink (recommended)"), ("blink", "A long blink")],
+                     "Wink: left eye left-clicks, right eye right-clicks. A long blink with both eyes is there if winking is hard.")
+        self._slider(l, "head_wink_ms", "Wink hold time", 100, 600, "{} ms", step=25,
+                     hint="How long to hold a wink before it clicks. Ordinary blinks close both eyes and never "
+                          "click; the pointer holds still while you wink so the click lands where you aimed.")
+        self._check(l, "head_swap_winks", "Swap left and right winks",
+                    "Only if your camera shows an un-mirrored picture and winks come out the wrong way round.")
+        self._choice(l, "head_mouth_action", "Open your mouth to",
+                     [("drag", "Drag"), ("scroll", "Scroll"), ("click", "Click"), ("off", "Nothing")],
+                     "Drag holds the button down while your mouth is open. Scroll: open your mouth, then nod down or up — the further, the faster.")
+        self._choice(l, "head_smile_action", "A held smile",
+                     [("off", "Nothing"), ("pause", "Pause / resume"), ("double_click", "Double-click"),
+                      ("right_click", "Right-click")],
+                     "Needs a clear smile held for about a third of a second, so a passing grin doesn't count. Pause / resume is handy for talking to someone without the pointer moving.")
         l.addStretch(1)
         return page
 
@@ -1044,6 +1088,12 @@ class MainWindow(QMainWindow):
         if self.settings.tracking_mode == "eye":
             self.subtitle.setText("Look at the screen to move the pointer. Hold your gaze still (or blink) "
                                   "to click — calibrate first in Settings → Eye tracking.")
+        elif self.settings.tracking_mode == "head":
+            mouth = {"drag": " Open your mouth to drag.", "scroll": " Open your mouth and nod to scroll.",
+                     "click": " Open your mouth to click.", "off": ""}[self.settings.head_mouth_action]
+            click = ("Wink to click: left eye left-click, right eye right-click."
+                     if self.settings.head_click == "wink" else "Hold a long blink to click.")
+            self.subtitle.setText(f"Move your head to steer the pointer with your nose. {click}{mouth}")
         else:
             self.subtitle.setText("Point with your index finger. Pinch to click, pinch and hold to drag, "
                                   "two fingers up to scroll.")
@@ -1130,8 +1180,9 @@ class MainWindow(QMainWindow):
         self.diag.setVisible(new.show_diagnostics)
         if new.verbose_logging != old.verbose_logging:
             logging.getLogger().setLevel(logging.DEBUG if new.verbose_logging else logging.INFO)
-        if new.tracking_mode != old.tracking_mode:
+        if any(getattr(new, k) != getattr(old, k) for k in ("tracking_mode", "head_click", "head_mouth_action")):
             self._update_subtitle()
+        if new.tracking_mode != old.tracking_mode:
             if self.settings_dialog is not None:
                 self.settings_dialog.update_calibration_status()
         if new.camera != old.camera:
@@ -1172,6 +1223,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Calibrated", f"Eye tracking is calibrated. {note}" + chr(10) * 2 +
                                     "If it drifts later (you moved, the laptop moved), use Re-centre in "
                                     "Settings → Eye tracking: one second, no recalibrating.")
+
+    def recentre_head(self) -> None:
+        if self.engine is None or self.settings.tracking_mode != "head":
+            QMessageBox.information(self, "Start the head pointer first",
+                "Pick Head pointer under Pointer → Tracking mode and press Start tracking, then re-centre.")
+            return
+        self.engine.recentre_head()
 
     def open_recentre(self) -> None:
         if not self._eye_ready():

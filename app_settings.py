@@ -31,15 +31,19 @@ SCREEN_MODES = ("primary", "all")
 SCROLL_POSES = ("two_fingers", "index")
 HIDE_ACTIONS = ("tray", "minimize", "quit")
 RESOLUTIONS = ("auto", "640x480", "800x600", "960x540", "1280x720", "1280x960", "1920x1080")
-TRACKING_MODES = ("hand", "eye")
+TRACKING_MODES = ("hand", "eye", "head")
 EYE_CLICK_MODES = ("dwell", "blink", "both")
 EYE_CALIBRATION_DETAIL = ("thorough", "quick")
+HEAD_POINTER_MODES = ("relative", "absolute")
+HEAD_CLICK_MODES = ("wink", "blink")
+HEAD_MOUTH_ACTIONS = ("drag", "scroll", "click", "off")
+HEAD_SMILE_ACTIONS = ("off", "pause", "double_click", "right_click")
 
 
 @dataclass
 class Settings:
     # ---- tracking mode --------------------------------------------------
-    tracking_mode: str = "hand"      # "hand" (pinch/drag/scroll) or "eye" (gaze pointer, dwell/blink click)
+    tracking_mode: str = "hand"      # "hand" (pinch/drag/scroll), "eye" (gaze pointer) or "head" (nose pointer, wink clicks)
 
     # ---- camera -------------------------------------------------------
     camera: str = "auto"            # "auto", "cv:<index>" or "url" (uses stream_url)
@@ -79,6 +83,19 @@ class Settings:
     eye_blink_ms: int = 250          # how long an eye must stay shut to count as a deliberate blink
     eye_calibration: str = ""        # GazeCalibration.to_json(); "" = not calibrated yet
     eye_calibration_detail: str = "thorough"   # "thorough": 25 points + a moving dot + a check (~70 s); "quick": 13 points
+
+    # ---- head pointer (tracking_mode "head") ---------------------------
+    head_pointer_mode: str = "relative"   # "relative" (like a mouse) or "absolute" (nose points at the spot)
+    head_speed: int = 45             # how far a head movement moves the pointer
+    head_acceleration: int = 50      # how much more a quick movement goes than a slow one (relative)
+    head_dead_zone: int = 20         # movement slower than this is ignored (tremor, breathing)
+    head_smoothing: int = 50
+    head_reach: int = 35             # absolute: how far to turn (% of face width) to reach an edge
+    head_click: str = "wink"         # "wink" (left eye = left click, right eye = right click) or "blink" (long blink = click)
+    head_wink_ms: int = 200          # how long a wink must be held to click
+    head_swap_winks: bool = False    # for cameras that hand over an un-mirrored picture
+    head_mouth_action: str = "drag"  # mouth open: "drag", "scroll" (nod to scroll), "click", "off"
+    head_smile_action: str = "off"   # held smile: "off", "pause" (toggle), "double_click", "right_click"
 
     # ---- optional hide gesture ----------------------------------------
     hide_gesture_enabled: bool = False
@@ -122,6 +139,12 @@ _RANGES: dict[str, tuple[float, float]] = {
     "eye_dwell_ms": (300, 2500),
     "eye_dwell_radius": (1, 15),
     "eye_blink_ms": (100, 800),
+    "head_speed": (1, 100),
+    "head_acceleration": (0, 100),
+    "head_dead_zone": (0, 100),
+    "head_smoothing": (0, 100),
+    "head_reach": (10, 80),
+    "head_wink_ms": (100, 600),
 }
 _CHOICES: dict[str, tuple[str, ...]] = {
     "screen": SCREEN_MODES,
@@ -131,6 +154,10 @@ _CHOICES: dict[str, tuple[str, ...]] = {
     "tracking_mode": TRACKING_MODES,
     "eye_click_mode": EYE_CLICK_MODES,
     "eye_calibration_detail": EYE_CALIBRATION_DETAIL,
+    "head_pointer_mode": HEAD_POINTER_MODES,
+    "head_click": HEAD_CLICK_MODES,
+    "head_mouth_action": HEAD_MOUTH_ACTIONS,
+    "head_smile_action": HEAD_SMILE_ACTIONS,
 }
 
 

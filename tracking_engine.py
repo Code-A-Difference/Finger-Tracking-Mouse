@@ -18,6 +18,7 @@ tracker; a result that arrives too late to trust is treated as "no hand".
 from __future__ import annotations
 
 import logging
+import math
 import queue
 import threading
 import time
@@ -29,11 +30,12 @@ import numpy as np
 
 import eye_pose
 import hand_pose
+import head_pose
 from app_settings import Settings
 from camera import CameraCapabilities, CameraInfo, FrameGrabber, make_source
 from eye_tracker import EyeTracker, draw_eye_points
-from gesture_state import DwellClick, GazeCalibration, gaze_features, HeldPose, PinchGesture, PointerFilter, PointerStabilizer, \
-    ScrollGesture
+from gesture_state import DwellClick, FaceSwitch, GazeCalibration, gaze_features, HeadPointer, HeldPose, PinchGesture, \
+    PointerFilter, PointerStabilizer, ScrollGesture, WinkClick
 from hand_tracker import HandTracker, draw_landmarks
 from pointer_output import PointerOutput
 
@@ -45,7 +47,8 @@ CAMERA_STALL_AFTER = 2.5       # s without a frame before the camera is restarte
 PREVIEW_FPS = 15
 
 CAMERA_KEYS = ("camera", "camera_resolution", "stream_url")
-TRACKER_FACTORIES: dict[str, Callable[[], Any]] = {"hand": HandTracker, "eye": EyeTracker}
+TRACKER_FACTORIES: dict[str, Callable[[], Any]] = {"hand": HandTracker, "eye": EyeTracker, "head": EyeTracker}
+FACE_MODES = ("eye", "head")   # modes that run the face model
 
 
 @dataclass
@@ -106,6 +109,18 @@ class TrackingEngine(threading.Thread):
         self.last_gaze_features: Optional[tuple[float, ...]] = None
         self._blink_since: Optional[float] = None
         self._blink_fired = False
+
+        # head pointer
+        self.head = HeadPointer(s.head_pointer_mode, s.head_speed, s.head_acceleration, s.head_dead_zone,
+                                s.head_smoothing, s.head_reach)
+        self.wink = WinkClick(s.head_wink_ms / 1000)
+        self.mouth = FaceSwitch(on=0.38, off=0.2, hold_seconds=0.12)
+        self.smile = FaceSwitch(on=0.65, off=0.35, hold_seconds=0.35)
+        self._head_pos: Optional[tuple[float, float]] = None
+        self._head_paused = False
+        self._head_dragging = False
+        self._head_scroll_ref: Optional[float] = None
+        self._head_recentre = False
 
         # diagnostics
         self.infer_started: Optional[float] = None
@@ -209,7 +224,7 @@ class TrackingEngine(threading.Thread):
         # Called from the camera thread.
         self._camera_state, self._camera_detail = state, detail
         if state == "connected" and isinstance(detail, CameraCapabilities):
-            self._label = "Look at the camera" if self.settings.tracking_mode == "eye" else "Show one hand to the camera"
+            self._label = "Look at the camera" if self.settings.tracking_mode in FACE_MODES else "Show one hand to the camera"
         elif state == "error":
             self._label = str(detail)
         elif state == "reconnecting":
@@ -232,6 +247,12 @@ class TrackingEngine(threading.Thread):
         self.hide.hold_seconds = new.hide_gesture_hold_ms / 1000
         self.gaze_filter.set_smoothing(new.eye_smoothing)
         self.dwell.configure(new.eye_dwell_ms / 1000, new.eye_dwell_radius / 100)
+        self.head.configure(new.head_pointer_mode, new.head_speed, new.head_acceleration, new.head_dead_zone,
+                            new.head_smoothing, new.head_reach)
+        self.wink.hold_seconds = new.head_wink_ms / 1000
+        if new.head_pointer_mode != old.head_pointer_mode:
+            self.head.reset()
+            self.head.recentre()
         if new.eye_calibration != old.eye_calibration:
             self.gaze_calibration = GazeCalibration.from_json(new.eye_calibration)
         self.output.pause_on_physical_mouse = new.pause_on_physical_mouse
@@ -246,6 +267,9 @@ class TrackingEngine(threading.Thread):
             self._release_everything()
             self.filter.reset()
             self.gaze_filter.reset()
+            self.head.reset()
+            self._head_pos = None
+            self._head_paused = False
             self._label = "Switching tracking mode…"
             self._rebuild_tracker()
         if any(getattr(new, k) != getattr(old, k) for k in CAMERA_KEYS):
@@ -261,6 +285,8 @@ class TrackingEngine(threading.Thread):
         """No new frame within the wait: treat as no hand/face, and watch for a dead camera."""
         if self.settings.tracking_mode == "eye":
             self._eye_absent(now)
+        elif self.settings.tracking_mode == "head":
+            self._head_absent(now)
         else:
             self._hand_absent(now)
         g = self.grabber
@@ -330,6 +356,14 @@ class TrackingEngine(threading.Thread):
                 self._eye_absent(now)
             else:
                 self._eye_present(measure, now)
+        elif s.tracking_mode == "head":
+            landmarks, blendshapes = result if result is not None else (None, None)
+            measure = (head_pose.measure(landmarks, blendshapes, w / h, s.head_swap_winks)
+                       if landmarks is not None else None)
+            if measure is None:
+                self._head_absent(now)
+            else:
+                self._head_present(measure, now)
         else:
             landmarks = result
             measure = hand_pose.measure(landmarks, w / h) if landmarks is not None else None
@@ -483,6 +517,141 @@ class TrackingEngine(threading.Thread):
             self.post("gesture", "click")
         self._update_eye_label(True, now, paused)
 
+    # -- head pointer ---------------------------------------------------------
+    def recentre_head(self) -> None:
+        """Called from the UI thread: absolute mode re-takes "straight ahead";
+        relative mode puts the pointer back in the middle of the screen."""
+        self._head_recentre = True
+
+    def _head_absent(self, now: float) -> None:
+        self._face_frames = 0
+        self.head.reset()
+        self.wink.reset()
+        self.mouth.reset()
+        self.smile.reset()
+        self._blink_since = None
+        self._blink_fired = False
+        if self._head_dragging:
+            self.output.release()
+            self._head_dragging = False
+        self._head_scroll_ref = None
+        if self._camera_state == "connected":
+            self._gesture, self._label = "no_face", "Look at the camera"
+
+    def _head_present(self, m: head_pose.HeadMeasure, now: float) -> None:
+        s = self.settings
+        self._face_frames += 1
+        left, top, width, height = self._desktop_rect(now)
+        paused = self.output.paused
+
+        if self._head_recentre:
+            self._head_recentre = False
+            self.head.recentre()
+            self._head_pos = (left + width / 2, top + height / 2)
+        if self._head_pos is None:
+            try:
+                cur = self.output.backend.position()
+            except Exception:
+                cur = None
+            self._head_pos = (float(cur[0]), float(cur[1])) if cur else (left + width / 2, top + height / 2)
+        here = (round(self._head_pos[0]), round(self._head_pos[1]))
+
+        # A held smile: pause/resume, or a click of its own.
+        if s.head_smile_action != "off" and self.smile.update(m.smile, now) == "start":
+            if s.head_smile_action == "pause":
+                self._head_paused = not self._head_paused
+                if self._head_dragging:
+                    self.output.release()
+                    self._head_dragging = False
+                self.head.reset()
+                self.post("gesture", "paused" if self._head_paused else "resumed")
+            elif not paused and not self._head_paused:
+                if s.head_smile_action == "double_click":
+                    self.output.click(*here)
+                    self.output.click(*here)
+                else:
+                    self.output.right_click(*here)
+                self.post("gesture", "click")
+        if self._head_paused:
+            self._gesture, self._label = "paused", "Paused — smile again to resume"
+            return
+
+        # Clicks: a one-eyed wink (left = left click, right = right click), or a long blink.
+        click: Optional[str] = None
+        blinking = False
+        if s.head_click == "wink":
+            click = self.wink.update(m.wink_left, m.wink_right, now)
+        else:
+            both = min(m.wink_left, m.wink_right)
+            blinking = both > 0.5
+            if both > 0.6:
+                if self._blink_since is None:
+                    self._blink_since = now
+                elif not self._blink_fired and now - self._blink_since >= max(0.35, s.head_wink_ms / 1000 * 2):
+                    click, self._blink_fired = "left", True
+            elif both < 0.3:
+                self._blink_since, self._blink_fired = None, False
+
+        # The mouth: drag while open, scroll by nodding while open, or click.
+        mouth_event = self.mouth.update(m.mouth_open, now) if s.head_mouth_action != "off" else None
+        scrolling = s.head_mouth_action == "scroll" and self.mouth.active
+        if mouth_event == "start":
+            if s.head_mouth_action == "drag" and not paused:
+                self.output.press(*here)
+                self._head_dragging = True
+                self.post("gesture", "mouse_down")
+            elif s.head_mouth_action == "click" and not paused:
+                click = click or "left"
+            elif s.head_mouth_action == "scroll":
+                self._head_scroll_ref = m.nose[1]
+        elif mouth_event == "end":
+            if self._head_dragging:
+                self.output.release()
+                self._head_dragging = False
+                self.post("gesture", "mouse_up")
+            self._head_scroll_ref = None
+
+        if scrolling and self._head_scroll_ref is not None and not paused:
+            # nod down to scroll down: how far from where the mouth opened sets the speed
+            tilt = m.nose[1] - self._head_scroll_ref
+            if abs(tilt) > 0.06:
+                self.output.scroll(-(tilt - math.copysign(0.06, tilt)) * 6 * (s.head_speed / 45))
+
+        # The pointer. Held still while a wink, blink or mouth gesture is
+        # starting, and while scrolling, so the gesture lands where you aimed.
+        frozen = self.wink.closing or self.mouth.pending or blinking or scrolling
+        step = self.head.update(m.nose, now, frozen=frozen)
+        if step is not None:
+            if self.head.mode == "absolute":
+                self._head_pos = (left + step[0] * (width - 1), top + step[1] * (height - 1))
+            else:
+                self._head_pos = (self._head_pos[0] + step[0] * width, self._head_pos[1] + step[1] * width)
+        self._head_pos = (min(left + width - 1, max(left, self._head_pos[0])),
+                          min(top + height - 1, max(top, self._head_pos[1])))
+        position = (round(self._head_pos[0]), round(self._head_pos[1]))
+        if not paused and position != self._last_cursor:
+            self.output.move(*position)
+        self._last_cursor = position
+
+        if click and not paused:
+            if click == "right":
+                self.output.right_click(*position)
+            else:
+                self.output.click(*position)
+            self.post("gesture", "click")
+
+        if paused:
+            g, text = "paused", "Paused while you use the mouse"
+        elif self._head_dragging:
+            g, text = "dragging", "Dragging — close your mouth to drop"
+        elif scrolling:
+            g, text = "scrolling", "Scrolling — nod up or down; close your mouth to stop"
+        elif self.wink.closing:
+            g, text = "pinched", "Wink…"
+        else:
+            g, text = "tracking", "Head pointer — wink to click" if s.head_click == "wink" else "Head pointer — long blink to click"
+        self._gesture, self._label = g, text
+
     def _update_eye_label(self, calibrated: bool, now: float, paused: bool) -> None:
         if paused:
             g, text = "paused", "Paused while you use the mouse"
@@ -512,6 +681,8 @@ class TrackingEngine(threading.Thread):
         self.scroll.reset()
         self.hide.reset()
         self.dwell.reset()
+        self.mouth.reset()
+        self._head_dragging = False
         self.output.release_all()
 
     def _update_label(self, m: hand_pose.HandMeasure, now: float, paused: bool) -> None:
@@ -550,6 +721,14 @@ class TrackingEngine(threading.Thread):
             if landmarks is not None and s.show_landmarks:
                 color = {"dwelling": (60, 220, 120), "gazing": (255, 200, 60)}.get(self._gesture, (180, 180, 180))
                 draw_eye_points(preview, landmarks, color)
+        elif s.tracking_mode == "head":
+            if landmarks is not None and s.show_landmarks:
+                color = {"pinched": (60, 220, 120), "dragging": (60, 180, 255), "scrolling": (60, 180, 255),
+                         "tracking": (255, 200, 60)}.get(self._gesture, (180, 180, 180))
+                draw_eye_points(preview, landmarks, (200, 200, 200))
+                nose = (int(landmarks[head_pose.NOSE_TIP].x * pw), int(landmarks[head_pose.NOSE_TIP].y * ph))
+                cv2.circle(preview, nose, 5, color, -1, cv2.LINE_AA)
+                cv2.circle(preview, nose, 9, color, 1, cv2.LINE_AA)
         else:
             if landmarks is not None and s.show_landmarks:
                 draw_landmarks(preview, landmarks)
