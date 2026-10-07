@@ -21,6 +21,7 @@ checks the pointer backend and Qt.
 from __future__ import annotations
 
 import json
+import math
 import logging
 import os
 import queue
@@ -196,128 +197,264 @@ class CalibrationTarget(QWidget):
 
 
 class CalibrationDialog(QDialog):
-    """Look at thirteen points in turn; fits gaze -> screen from what the eye
-    tracker saw while each one was up.
+    """Teach the eye tracker where you're looking.
 
-    Thirteen, not nine: the 3x3 grid out near the edges, plus four points
-    between it and the centre, where most of what you look at actually is.
-    Each point is held until its ring closes, then sampled for a second;
-    blink frames are thrown away and the median taken (steady_reading), so a
-    blink or a glance doesn't skew it. A point that couldn't be read is
-    shown again. At the end the fit's own error is reported, so you know
-    whether to redo it.
+    Thorough (the default, about 70 seconds):
+      1. a 5x5 grid of points, edge to edge — each a ring that closes onto a
+         4-pixel centre, sampled once it has (blinks dropped, median kept);
+      2. a dot that glides around the screen for 20 seconds while you follow
+         it — hundreds of samples, at every place in between the grid points;
+      3. five check points it hasn't trained on: the error there is what's
+         reported, so the number is honest, and they're then added in too.
+    Quick: thirteen points, no moving dot, no check (the report is then the
+    fit's own error).
 
-    Needs eye tracking already running (MainWindow checks before opening
-    this): it reads the engine's last gaze values on a timer, the same way
-    the main window reads ``engine.view`` — nothing here touches the
-    tracking thread directly.
+    ``recentre=True`` is the one-second drift fix: one point in the middle,
+    shifting the existing calibration instead of replacing it.
+
+    Needs eye tracking running (MainWindow checks before opening this): it
+    reads the engine's last gaze values on a timer, the same way the main
+    window reads ``engine.view`` — nothing here touches the tracking thread.
     """
 
-    POINTS = [(0.5, 0.5),
-              (0.05, 0.05), (0.5, 0.05), (0.95, 0.05),
-              (0.95, 0.5), (0.95, 0.95), (0.5, 0.95),
-              (0.05, 0.95), (0.05, 0.5),
-              (0.275, 0.275), (0.725, 0.275), (0.725, 0.725), (0.275, 0.725)]
-    SETTLE_MS = 1000    # the ring closes over this long; the eye gets there
-    SAMPLE_MS = 1000    # then readings are collected for this long
-    RETRIES = 1         # a point that couldn't be read is shown once more
+    GRID = [(x, y) for y in (0.04, 0.27, 0.5, 0.73, 0.96) for x in (0.04, 0.27, 0.5, 0.73, 0.96)]
+    QUICK = [(0.5, 0.5), (0.05, 0.05), (0.5, 0.05), (0.95, 0.05), (0.95, 0.5), (0.95, 0.95), (0.5, 0.95),
+             (0.05, 0.95), (0.05, 0.5), (0.275, 0.275), (0.725, 0.275), (0.725, 0.725), (0.275, 0.725)]
+    CHECK = [(0.17, 0.38), (0.62, 0.16), (0.84, 0.62), (0.4, 0.84), (0.6, 0.45)]
+    SETTLE_MS = 900       # the ring closes over this long; the eye gets there
+    SAMPLE_MS = 800       # then readings are collected for this long
+    PURSUIT_MS = 20000    # the moving dot
+    PURSUIT_LAG = 0.15    # eyes trail a moving target by about this much (seconds)
+    FIX_WEIGHT = 8.0      # a fixation (a median of ~25 frames) counts as much as 8 moving-dot frames
+    RETRIES = 1
 
-    def __init__(self, main: "MainWindow") -> None:
+    def __init__(self, main: "MainWindow", recentre: bool = False) -> None:
         super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.main = main
+        self.recentre = recentre
         self.setModal(True)
         left, top, width, height = main.output.backend.desktop_rect(main.settings.screen)
         self.setGeometry(left, top, width, height)
         self.setStyleSheet("background: #05070d;")
+        thorough = main.settings.eye_calibration_detail == "thorough" and not recentre
+        if recentre:
+            self.plan = [("fix", [(0.5, 0.5)])]
+        elif thorough:
+            # snake through the grid so the eye never jumps across the whole screen
+            rows = [self.GRID[i:i + 5] for i in range(0, 25, 5)]
+            snake = [p for i, r in enumerate(rows) for p in (r if i % 2 == 0 else r[::-1])]
+            self.plan = [("fix", snake), ("pursuit", None), ("check", self.CHECK)]
+        else:
+            self.plan = [("fix", self.QUICK)]
         self.samples: list[tuple] = []
+        self.weights: list[float] = []
+        self.check_samples: list[tuple] = []
         self.accuracy: Optional[float] = None    # mean error, fraction of the screen
+        self.accuracy_is_held_out = False
+        self._stage = 0
         self._index = 0
         self._retried = 0
         self._readings: list[tuple] = []
+        self._trace: list[tuple] = []            # pursuit: (t, features, blink)
+        self._path: list[tuple] = []             # pursuit: (t, x, y)
         self._phase_start = 0.0
+        self._started = False
 
         self.hint = QLabel(self)
-        self.hint.setStyleSheet("color: #aebbd0; font-size: 15px; background: transparent;")
+        self.hint.setStyleSheet("color: #aebbd0; font-size: 16px; background: transparent;")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.hint.setGeometry(0, height // 2 + 80, width, 60)
         self.hint.setWordWrap(True)
+        self.hint.setGeometry(width // 8, height // 2 + 80, width * 3 // 4, 90)
 
         self.target = CalibrationTarget(self)
+        self.target.hide()
         self._tick = QTimer(self, interval=16)
         self._tick.timeout.connect(self._step)
-        self._show_point()
+
+        if recentre:
+            self._begin()
+        else:
+            self.hint.move(width // 8, height // 2 - 45)
+            self.hint.setText(
+                ("Thorough calibration — about a minute. Sit as you normally will, face the screen, and keep "
+                 "your head still. Look at the centre of each ring until it moves on, then follow the moving "
+                 "dot with your eyes. " if thorough else
+                 "Quick calibration — 13 points. Keep your head still and look at the centre of each ring. ")
+                + "Press Space to start. Esc cancels.")
 
     def keyPressEvent(self, event: Any) -> None:  # noqa: N802 (Qt name)
         if event.key() == Qt.Key.Key_Escape:
             self.reject()
+        elif event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter) and not self._started:
+            self._begin()
         else:
             super().keyPressEvent(event)
 
+    def mousePressEvent(self, event: Any) -> None:  # noqa: N802 (Qt name)
+        if not self._started:
+            self._begin()
+
+    # -- reading the engine ------------------------------------------------
+    def _reading(self) -> Optional[tuple]:
+        engine = self.main.engine
+        if engine is None or engine.last_gaze_features is None:
+            return None
+        return engine.last_gaze_features, engine.last_gaze_head, engine.last_gaze_blink
+
+    # -- flow --------------------------------------------------------------
+    def _begin(self) -> None:
+        self._started = True
+        self._stage, self._index = 0, 0
+        self._enter_stage()
+
+    def _enter_stage(self) -> None:
+        if self._stage >= len(self.plan):
+            self._finish()
+            return
+        kind, _points = self.plan[self._stage]
+        self._index = 0
+        if kind == "pursuit":
+            self._trace, self._path = [], []
+            self.target.sampling = True
+            self.target.set_progress(1)
+            self.target.show()
+            self._place_hint(0.5)
+            self.hint.setText("Now follow the moving dot with your eyes — just your eyes, head still.")
+            self._phase_start = time.monotonic()
+            self._tick.start()
+        else:
+            self._show_point()
+
+    def _place_hint(self, fy: float) -> None:
+        self.hint.move(self.width() // 8, self.height() // 2 - 150 if fy > 0.6 else self.height() // 2 + 80)
+
     def _show_point(self) -> None:
-        fx, fy = self.POINTS[self._index]
-        x = int(fx * self.width()) - self.target.width() // 2
-        y = int(fy * self.height()) - self.target.height() // 2
-        self.target.move(x, y)
+        kind, points = self.plan[self._stage]
+        fx, fy = points[self._index]
+        self._move_target(fx, fy)
         self.target.sampling = False
         self.target.set_progress(0)
         self.target.show()
-        # keep the instructions out from under the point being looked at
-        self.hint.move(0, self.height() // 2 - 140 if fy > 0.6 else self.height() // 2 + 80)
+        self._place_hint(fy)
+        label = {"fix": "Calibrating", "check": "Checking"}[kind] if not self.recentre else "Re-centring"
         again = " Keep your eyes open and on the centre." if self._retried else ""
-        self.hint.setText(f"Follow the ring to its centre and keep looking there — {self._index + 1} of "
-                          f"{len(self.POINTS)}. Keep your head still. Esc cancels.{again}")
+        self.hint.setText(f"{label}: look at the centre of the ring — {self._index + 1} of {len(points)}. "
+                          f"Esc cancels.{again}")
         self._readings = []
         self._phase_start = time.monotonic()
         self._tick.start()
 
+    def _move_target(self, fx: float, fy: float) -> None:
+        self.target.move(int(fx * self.width()) - self.target.width() // 2,
+                         int(fy * self.height()) - self.target.height() // 2)
+
+    @staticmethod
+    def pursuit_point(t: float) -> tuple[float, float]:
+        """Where the moving dot is ``t`` seconds in: a slow Lissajous sweep that
+        covers the whole screen, edge to edge, without sudden jumps."""
+        return (0.5 + 0.45 * math.sin(t * 0.55 + 0.3), 0.5 + 0.44 * math.sin(t * 0.77))
+
     def _step(self) -> None:
+        kind, _ = self.plan[self._stage]
         elapsed = (time.monotonic() - self._phase_start) * 1000
+        if kind == "pursuit":
+            t = elapsed / 1000
+            x, y = self.pursuit_point(t)
+            self._move_target(x, y)
+            self._path.append((t, x, y))
+            r = self._reading()
+            if r is not None:
+                self._trace.append((t, r[0], r[2]))
+            if elapsed >= self.PURSUIT_MS:
+                self._tick.stop()
+                self._end_pursuit()
+            return
         if elapsed < self.SETTLE_MS:
             self.target.set_progress(elapsed / self.SETTLE_MS)
             return
         if not self.target.sampling:
             self.target.sampling = True
             self.target.set_progress(1)
-        engine = self.main.engine
-        offset = engine.last_gaze_offset if engine is not None else None
-        if offset is not None:
-            self._readings.append((offset, engine.last_gaze_head, engine.last_gaze_blink))
-        if elapsed >= self.SETTLE_MS + self.SAMPLE_MS:
+        r = self._reading()
+        if r is not None:
+            self._readings.append(r)
+        # a re-centre rests on one point, so it gets twice the readings
+        if elapsed >= self.SETTLE_MS + self.SAMPLE_MS * (2 if self.recentre else 1):
             self._tick.stop()
             self._next_point()
 
+    def _end_pursuit(self) -> None:
+        # Pair each frame with where the dot was PURSUIT_LAG earlier (the eye
+        # trails a moving target), skip the first second while the eye catches
+        # up, and drop blinks.
+        for t, features, blink in self._trace:
+            if t < 1.0 or blink >= 0.35:
+                continue
+            x, y = self.pursuit_point(t - self.PURSUIT_LAG)
+            self.samples.append((features, (x, y)))
+            self.weights.append(1.0)
+        self._stage += 1
+        self._enter_stage()
+
     def _next_point(self) -> None:
+        kind, points = self.plan[self._stage]
         reading = steady_reading(self._readings)
         if reading is None and self._retried < self.RETRIES:
             self._retried += 1
             self._show_point()
             return
         if reading is not None:
-            offset, head = reading
-            self.samples.append((offset, self.POINTS[self._index], head))
+            features, _head = reading
+            target = points[self._index]
+            if kind == "check":
+                self.check_samples.append((features, target))
+            else:
+                self.samples.append((features, target))
+                self.weights.append(self.FIX_WEIGHT)
         self._retried = 0
         self._index += 1
-        if self._index >= len(self.POINTS):
-            self._finish()
+        if self._index >= len(points):
+            self._stage += 1
+            self._enter_stage()
         else:
             self._show_point()
 
     def _finish(self) -> None:
         self.target.hide()
-        if len(self.samples) < 9:
+        if self.recentre:
+            cal = GazeCalibration.from_json(self.main.settings.eye_calibration)
+            if not self.samples or not cal.recentre(self.samples[0][0], (0.5, 0.5)):
+                QMessageBox.warning(self, "Couldn't re-centre",
+                    "Finger Mouse couldn't see your eyes clearly enough. Try again, or recalibrate.")
+                self.reject()
+                return
+            self.main.change_settings(eye_calibration=cal.to_json())
+            self.accept()
+            return
+        fixations = sum(1 for w in self.weights if w == self.FIX_WEIGHT)
+        if fixations < 9:
             QMessageBox.warning(self, "Calibration incomplete",
                 "Finger Mouse couldn't see your eyes clearly for enough of the points. Make sure your face "
                 "is well lit and centred in the camera, then try again.")
             self.reject()
             return
         cal = GazeCalibration()
-        if not cal.fit(self.samples):
+        if not cal.fit(self.samples, self.weights):
             QMessageBox.warning(self, "Calibration didn't take",
                 "That didn't produce a usable mapping. Try again, keeping your head still and looking "
                 "only at the centre of each ring.")
             self.reject()
             return
-        self.accuracy = cal.error(self.samples)
+        if self.check_samples:
+            # the honest number: points it never trained on. Then use them too.
+            self.accuracy = cal.error(self.check_samples)
+            self.accuracy_is_held_out = True
+            refit = GazeCalibration()
+            if refit.fit(self.samples + self.check_samples,
+                         self.weights + [self.FIX_WEIGHT] * len(self.check_samples)):
+                cal = refit
+        else:
+            self.accuracy = cal.error([s for s, w in zip(self.samples, self.weights) if w == self.FIX_WEIGHT])
         self.main.change_settings(eye_calibration=cal.to_json())
         self.accept()
 
@@ -517,9 +654,19 @@ class SettingsDialog(QDialog):
         self.calibration_status = QLabel()
         self.calibration_status.setObjectName("value")
         l.addWidget(self.calibration_status)
+        self._choice(l, "eye_calibration_detail", "Calibration",
+                     [("thorough", "Thorough — 25 points, a moving dot and a check (about 70 s, recommended)"),
+                      ("quick", "Quick — 13 points (about 25 s)")])
+        row = QHBoxLayout()
         self.calibrate_button = QPushButton("Calibrate…")
         self.calibrate_button.clicked.connect(self.main.open_calibration)
-        l.addWidget(self.calibrate_button, 0, Qt.AlignmentFlag.AlignLeft)
+        row.addWidget(self.calibrate_button)
+        self.recentre_button = QPushButton("Re-centre (1 s)")
+        self.recentre_button.setToolTip("Pointer drifted since calibrating? Look at one dot for a second to fix it.")
+        self.recentre_button.clicked.connect(self.main.open_recentre)
+        row.addWidget(self.recentre_button)
+        row.addStretch(1)
+        l.addLayout(row)
         self._hint(l, "Calibrating needs tracking already running in eye mode: pick Eye gaze above, close "
                       "this window, press Start tracking, then open Settings again to calibrate.")
         l.addStretch(1)
@@ -722,6 +869,7 @@ class SettingsDialog(QDialog):
         self.calibration_status.setText("Calibrated ✓" if calibrated else "Not calibrated yet")
         ready = self.main.is_tracking() and self.main.settings.tracking_mode == "eye"
         self.calibrate_button.setEnabled(ready)
+        self.recentre_button.setEnabled(ready and calibrated)
         self.calibrate_button.setToolTip(
             "" if ready else "Switch to Eye gaze mode and press Start tracking first.")
 
@@ -1005,10 +1153,7 @@ class MainWindow(QMainWindow):
         self.settings_dialog.activateWindow()
 
     def open_calibration(self) -> None:
-        if self.engine is None or self.output is None or self.settings.tracking_mode != "eye":
-            QMessageBox.information(self, "Start eye tracking first",
-                "Switch to Eye gaze mode in Settings and press Start tracking, then come back here to "
-                "calibrate.")
+        if not self._eye_ready():
             return
         dialog = CalibrationDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1020,10 +1165,30 @@ class MainWindow(QMainWindow):
             else:
                 screen = QGuiApplication.primaryScreen().size()
                 px = int(err * (screen.width() ** 2 + screen.height() ** 2) ** 0.5 / 1.414)
-                quality = ("Great" if err < 0.04 else "Good" if err < 0.07 else "Rough — try calibrating again with "
-                           "your head still and the room well lit")
-                note = f"Average error: about {err * 100:.1f}% of the screen (~{px} px). {quality}."
-            QMessageBox.information(self, "Calibrated", f"Eye tracking is calibrated. {note}")
+                quality = ("Great" if err < 0.035 else "Good" if err < 0.06 else "Rough — calibrating again in "
+                           "even light, with your head still, usually helps")
+                where = "on check points it didn't train on" if dialog.accuracy_is_held_out else "on the calibration points"
+                note = f"Average error {where}: about {err * 100:.1f}% of the screen (~{px} px). {quality}."
+            QMessageBox.information(self, "Calibrated", f"Eye tracking is calibrated. {note}" + chr(10) * 2 +
+                                    "If it drifts later (you moved, the laptop moved), use Re-centre in "
+                                    "Settings → Eye tracking: one second, no recalibrating.")
+
+    def open_recentre(self) -> None:
+        if not self._eye_ready():
+            return
+        if not GazeCalibration.from_json(self.settings.eye_calibration).is_calibrated:
+            QMessageBox.information(self, "Calibrate first", "Re-centring adjusts a calibration — calibrate first.")
+            return
+        if CalibrationDialog(self, recentre=True).exec() == QDialog.DialogCode.Accepted and self.settings_dialog:
+            self.settings_dialog.load(self.settings)
+
+    def _eye_ready(self) -> bool:
+        if self.engine is None or self.output is None or self.settings.tracking_mode != "eye":
+            QMessageBox.information(self, "Start eye tracking first",
+                "Switch to Eye gaze mode in Settings and press Start tracking, then come back here to "
+                "calibrate.")
+            return False
+        return True
 
     # -- cameras ----------------------------------------------------------------
     def refresh_cameras(self) -> None:

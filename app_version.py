@@ -6,7 +6,7 @@ installer builders. Bump APP_VERSION, tag ``v<APP_VERSION>``, push the tag.
 """
 
 APP_NAME = "Finger Mouse"
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.5.0"
 APP_ID = "app.fingermouse.desktop"          # macOS bundle id / Linux app id
 PUBLISHER = "Code-A-Difference"
 PUBLISHER_URL = "https://codeadifference.ct.ws/projects/finger-tracking-mouse/"

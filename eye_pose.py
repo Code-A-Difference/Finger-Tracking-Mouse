@@ -46,8 +46,13 @@ def _xy(lm: Any) -> Point:
     return (lm.x, lm.y)
 
 
-def _one_eye(pts: Sequence[Point], corners: dict[str, int], iris: Point) -> Optional[tuple[Point, float]]:
-    """(offset, socket_scale) for one eye, or None if the socket reads as too small to trust."""
+def _one_eye(pts: Sequence[Point], corners: dict[str, int], iris: Point) -> Optional[tuple[Point, float, float]]:
+    """(offset, socket_scale, openness) for one eye, or None if the socket reads as too small to trust.
+
+    openness = socket height / width. The upper lid follows the eyeball when
+    you look up or down, so this carries vertical gaze better than the iris
+    position alone does (the iris barely moves vertically inside the socket).
+    """
     outer, inner, top, bottom = (pts[corners[k]] for k in ("outer", "inner", "top", "bottom"))
     width = abs(inner[0] - outer[0])
     height = abs(bottom[1] - top[1])
@@ -58,7 +63,7 @@ def _one_eye(pts: Sequence[Point], corners: dict[str, int], iris: Point) -> Opti
     # -1..1: 0 is centred in the socket, negative/positive is toward each edge.
     dx = ((iris[0] - left_x) / width - 0.5) * 2
     dy = ((iris[1] - top_y) / height - 0.5) * 2
-    return (dx, dy), (width + height) / 2
+    return (dx, dy), (width + height) / 2, height / width
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,11 @@ class EyeMeasure:
     # nod (y). Calibration uses it so a small head movement no longer throws
     # the pointer across the screen.
     head: tuple[float, float] = (0.0, 0.0)
+    # Each eye's own offset (right, left) — they disagree in useful ways near
+    # the screen edges — and how open the eyes are. Calibration feeds all of it
+    # to the mapping (gesture_state.gaze_features).
+    per_eye: tuple[tuple[float, float], tuple[float, float]] = ((0.0, 0.0), (0.0, 0.0))
+    openness: float = 0.0
 
 
 def measure(landmarks: Sequence[Any], blendshapes: dict[str, float], aspect: float) -> Optional[EyeMeasure]:
@@ -89,8 +99,11 @@ def measure(landmarks: Sequence[Any], blendshapes: dict[str, float], aspect: flo
     if right is None and left is None:
         return None
     both = [eye for eye in (right, left) if eye is not None]
-    offsets = [o for o, _ in both]
-    scales = [s for _, s in both]
+    offsets = [o for o, _, _ in both]
+    scales = [s for _, s, _ in both]
+    openness = sum(op for _, _, op in both) / len(both)
+    r_off = right[0] if right is not None else left[0]     # one eye unreadable: use the other for both
+    l_off = left[0] if left is not None else right[0]
     ox = sum(o[0] for o in offsets) / len(offsets)
     oy = sum(o[1] for o in offsets) / len(offsets)
 
@@ -110,4 +123,5 @@ def measure(landmarks: Sequence[Any], blendshapes: dict[str, float], aspect: flo
 
     bl = max(0.0, min(1.0, blendshapes.get(BLINK_LEFT, 0.0)))
     br = max(0.0, min(1.0, blendshapes.get(BLINK_RIGHT, 0.0)))
-    return EyeMeasure(offset=(ox, oy), blink_left=bl, blink_right=br, blink=max(bl, br), scale=scale, head=head)
+    return EyeMeasure(offset=(ox, oy), blink_left=bl, blink_right=br, blink=max(bl, br), scale=scale, head=head,
+                      per_eye=(r_off, l_off), openness=openness)

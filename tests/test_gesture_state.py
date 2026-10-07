@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from gesture_state import DwellClick, GazeCalibration, steady_reading, HeldPose, OneEuroFilter, PinchGesture, PointerFilter, \
+from gesture_state import DwellClick, GazeCalibration, gaze_features, steady_reading, HeldPose, OneEuroFilter, PinchGesture, PointerFilter, \
     PointerStabilizer, ScrollGesture
 
 DT = 1 / 30
@@ -506,3 +506,81 @@ def test_steady_reading_drops_blinks_and_ignores_a_glance():
     assert offset == (0.20, -0.10)
     assert steady_reading([((0, 0), (0, 0), 0.9)] * 20) is None       # all blinks: no reading
     assert steady_reading([((0, 0), (0, 0), 0.0)] * 3) is None        # too few frames
+
+
+# -- v3: the full calibration (grid + moving dot), many features -----------
+
+def _simulated_eye(tx, ty, head=(0.0, 0.6), rng=None):
+    """What a real eye looks like at screen point (tx, ty): the iris moves
+    plenty sideways but barely up and down; the eyelid opening carries most
+    of the vertical; the two eyes disagree slightly near the edges; the head
+    shifts it all; plus measurement noise."""
+    import random
+    rng = rng or random.Random(0)
+    n = lambda s: rng.gauss(0, s)
+    gx = (tx - 0.5) / 0.55 + 0.4 * (head[0])
+    gy = 0.25 * (ty - 0.5) / 0.55 + 0.2 * (head[1] - 0.6)
+    openness = 0.36 - 0.18 * (ty - 0.5) + 0.05 * (head[1] - 0.6)
+    rx, lx = gx + 0.12 * (tx - 0.5), gx - 0.12 * (tx - 0.5)
+    return gaze_features((gx + n(0.02), gy + n(0.02)), (head[0] + n(0.005), head[1] + n(0.005)),
+                         ((rx + n(0.02), gy + n(0.02)), (lx + n(0.02), gy + n(0.02))), openness + n(0.004))
+
+
+def _calibration_set(rng):
+    grid = [(x, y) for y in (0.04, 0.27, 0.5, 0.73, 0.96) for x in (0.04, 0.27, 0.5, 0.73, 0.96)]
+    samples, weights = [], []
+    for i, (tx, ty) in enumerate(grid):
+        head = (0.03 * ((i % 3) - 1), 0.6 + 0.02 * ((i % 2) * 2 - 1))
+        samples.append((_simulated_eye(tx, ty, head, rng), (tx, ty)))
+        weights.append(8.0)
+    for k in range(300):                                   # the moving dot
+        import math as m
+        tx, ty = 0.5 + 0.45 * m.sin(k / 23), 0.5 + 0.45 * m.sin(k / 17 + 1)
+        samples.append((_simulated_eye(tx, ty, (0.0, 0.6), rng), (tx, ty)))
+        weights.append(1.0)
+    return samples, weights
+
+
+def test_full_calibration_beats_the_old_mapping_on_points_it_never_saw():
+    import random
+    rng = random.Random(7)
+    samples, weights = _calibration_set(rng)
+    full = GazeCalibration()
+    assert full.fit(samples, weights) is True
+    assert full.version == 3 and full.ridge in GazeCalibration.RIDGE_GRID
+
+    old = GazeCalibration()                                 # offset + head only, the 2.4.0 way
+    old.fit([(f[:2], t, (f[7], f[8])) for f, t in samples[:25]])
+
+    test = [(_simulated_eye(x, y, (0.0, 0.6), rng), (x, y)) for x, y in ((0.2, 0.3), (0.8, 0.35), (0.5, 0.8), (0.3, 0.65), (0.66, 0.12))]
+    new_err = full.error(test)
+    old_err = old.error([(f[:2], t, (f[7], f[8])) for f, t in test])
+    assert new_err < 0.03, new_err
+    assert new_err < old_err * 0.6, (new_err, old_err)     # clearly better, mostly on vertical
+
+
+def test_full_calibration_round_trips_recentres_and_still_takes_a_bare_offset():
+    import random
+    samples, weights = _calibration_set(random.Random(3))
+    cal = GazeCalibration()
+    cal.fit(samples, weights)
+    again = GazeCalibration.from_json(cal.to_json())
+    assert again.version == 3
+    f = samples[3][0]
+    a, b = cal.apply(f), again.apply(f)
+    assert abs(a[0] - b[0]) < 1e-4 and abs(a[1] - b[1]) < 1e-4     # stored to 7 significant figures
+
+    # drift: everything now lands 0.1 to the right; one look at the centre fixes it
+    centre = _simulated_eye(0.5, 0.5, (0.0, 0.6), random.Random(1))
+    again.bias = (0.1, 0.0)
+    assert again.recentre(centre) is True
+    p = again.apply(centre)
+    assert abs(p[0] - 0.5) < 1e-6 and abs(p[1] - 0.5) < 1e-6
+    assert again.apply(f[:2]) is not None                   # older callers' bare offsets still work
+    assert not GazeCalibration.from_json('{"v": 3, "x": [1], "y": [1], "mean": [], "scale": []}').is_calibrated
+
+
+def test_steady_reading_takes_the_median_of_every_feature():
+    frames = [(tuple(float(k) for k in range(9)), (0.0, 0.6), 0.0)] * 9 + [(tuple(9.0 for _ in range(9)), (0.0, 0.6), 0.0)] * 2
+    features, head = steady_reading(frames)
+    assert features == tuple(float(k) for k in range(9))

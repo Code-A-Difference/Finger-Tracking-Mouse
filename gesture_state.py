@@ -523,44 +523,65 @@ def _solve(matrix: list[list[float]], vector: list[float]) -> Optional[list[floa
     return [aug[i][n] for i in range(n)]
 
 
+GAZE_FEATURES = 9   # gx, gy, right x, right y, left x, left y, openness, head x, head y
+
+
+def gaze_features(offset: tuple[float, float], head: tuple[float, float] = (0.0, 0.0),
+                  per_eye: Optional[tuple[tuple[float, float], tuple[float, float]]] = None,
+                  openness: float = 0.0) -> tuple[float, ...]:
+    """Everything the mapping looks at, from one eye_pose.EyeMeasure."""
+    (rx, ry), (lx, ly) = per_eye if per_eye is not None else (offset, offset)
+    return (offset[0], offset[1], rx, ry, lx, ly, openness, head[0], head[1])
+
+
+def _round(values: Sequence[float]) -> list[float]:
+    return [float(f"{v:.7g}") for v in values]
+
+
 class GazeCalibration:
-    """Maps a raw gaze offset (eye_pose.EyeMeasure.offset) to a normalised
-    (0–1) screen position.
+    """Maps what the eyes are doing to a normalised (0–1) screen position.
 
-    A second-degree polynomial in the two offset axes (``1, x, y, xy, x²,
-    y²``), the standard simple mapping for webcam eye tracking: it bends
-    enough to follow how an eyeball's rotation maps onto a flat screen. When
-    the calibration also recorded where the head was (``EyeMeasure.head``),
-    two more terms add the head's turn and nod, so moving your head a little
-    after calibrating shifts the mapping with you instead of sending the
-    pointer somewhere else.
+    Three generations, all still loadable:
 
-    Fit by least squares with a touch of ridge regularisation (the normal
-    equations, solved directly — no numpy needed for 8 unknowns): a dot you
-    glanced away from averages out instead of bending the whole mapping, and
-    a calibration where you barely moved your eyes can't blow up into wild
-    coefficients.
+    1. six terms: a second-degree polynomial in the averaged iris offset.
+    2. eight: the same plus head turn and nod.
+    3. (current) fifteen terms over nine measurements (``gaze_features``):
+       the averaged offset's polynomial, the difference between the two eyes,
+       how open the eyes are (the lid follows the eyeball up and down, which
+       the iris barely does inside its socket), and head turn and nod with
+       how they interact with gaze. Fit to hundreds of samples — a grid of
+       fixations plus a followed moving dot — by weighted ridge regression,
+       with the amount of ridge chosen by cross-validation so it fits what
+       generalises, not the noise.
+
+    A small ``bias`` on top is what the one-second re-centre adjusts when the
+    mapping drifts (a shifted chair, a moved laptop), without recalibrating.
     """
 
     MIN_SAMPLES = 6
-    RIDGE = 1e-4
+    MIN_SAMPLES_V3 = 20
+    RIDGE = 1e-4                                    # v1/v2
+    RIDGE_GRID = (1e-4, 1e-3, 1e-2, 3e-2, 1e-1)     # v3, chosen by cross-validation
 
     def __init__(self) -> None:
         self.coeffs_x: Optional[list[float]] = None
         self.coeffs_y: Optional[list[float]] = None
+        self.version = 1
         self.use_head = False
         self.head_ref: tuple[float, float] = (0.0, 0.0)
+        self.mean: list[float] = [0.0] * GAZE_FEATURES
+        self.scale: list[float] = []
+        self.bias: tuple[float, float] = (0.0, 0.0)
+        self.ridge = 0.0
 
     @property
     def is_calibrated(self) -> bool:
         return self.coeffs_x is not None and self.coeffs_y is not None
 
     def reset(self) -> None:
-        self.coeffs_x = None
-        self.coeffs_y = None
-        self.use_head = False
-        self.head_ref = (0.0, 0.0)
+        self.__init__()
 
+    # -- terms ---------------------------------------------------------------
     def _terms(self, offset: tuple[float, float], head: Optional[tuple[float, float]] = None) -> list[float]:
         x, y = offset
         base = [1.0, x, y, x * y, x * x, y * y]
@@ -569,68 +590,171 @@ class GazeCalibration:
         hx, hy = head if head is not None else self.head_ref
         return base + [hx - self.head_ref[0], hy - self.head_ref[1]]
 
+    def _raw_v3(self, f: Sequence[float]) -> list[float]:
+        c = [v - m for v, m in zip(f, self.mean)]
+        gx, gy = c[0], c[1]
+        dx, dy = c[2] - c[4], c[3] - c[5]
+        op, hx, hy = c[6], c[7], c[8]
+        return [1.0, gx, gy, gx * gy, gx * gx, gy * gy, dx, dy, op, op * gy, op * gx, hx, hy, hx * gx, hy * gy]
+
+    def _terms_v3(self, f: Sequence[float]) -> list[float]:
+        raw = self._raw_v3(f)
+        return [raw[0]] + [r / s for r, s in zip(raw[1:], self.scale)]
+
+    def _as_features(self, x: Sequence[float], head: Optional[tuple[float, float]]) -> tuple[float, ...]:
+        if len(x) == GAZE_FEATURES:
+            return tuple(x)
+        # an offset on its own: fill the rest in with the calibration's averages
+        m = self.mean
+        h = head if head is not None else (m[7], m[8])
+        return (x[0], x[1], x[0], x[1], x[0], x[1], m[6], h[0], h[1])
+
     @staticmethod
     def _split(sample):
-        """A sample is (offset, target) or (offset, target, head)."""
+        """A sample is (offset_or_features, target) or (offset, target, head)."""
         if len(sample) == 3:
             return sample[0], sample[1], sample[2]
         return sample[0], sample[1], None
 
-    def fit(self, samples: Sequence[tuple]) -> bool:
-        """``samples``: [(gaze_offset, (screen_x, screen_y)[, head]), ...].
-        Returns whether it took."""
-        if len(samples) < self.MIN_SAMPLES:
-            return False
-        parts = [self._split(s) for s in samples]
-        heads = [h for _, _, h in parts]
-        use_head = all(h is not None for h in heads) and len(samples) >= 9
-        head_ref = ((sum(h[0] for h in heads) / len(heads), sum(h[1] for h in heads) / len(heads))
-                    if use_head else (0.0, 0.0))
-
-        # fit with the candidate setting, then commit it only if it solved
-        prev = (self.use_head, self.head_ref)
-        self.use_head, self.head_ref = use_head, head_ref
-        terms = [self._terms(o, h) for o, _, h in parts]
-        n = len(terms[0])
-        ata = [[sum(row[i] * row[j] for row in terms) for j in range(n)] for i in range(n)]
-        for i in range(1, n):                  # never shrink the constant term
-            ata[i][i] += self.RIDGE * len(terms)
-        atx = [sum(row[i] * t[0] for row, (_, t, _) in zip(terms, parts)) for i in range(n)]
-        aty = [sum(row[i] * t[1] for row, (_, t, _) in zip(terms, parts)) for i in range(n)]
+    # -- fitting -------------------------------------------------------------
+    @staticmethod
+    def _weighted_fit(rows: list[list[float]], targets: list[tuple[float, float]], weights: list[float],
+                      ridge: float) -> Optional[tuple[list[float], list[float]]]:
+        n = len(rows[0])
+        ata = [[0.0] * n for _ in range(n)]
+        atx = [0.0] * n
+        aty = [0.0] * n
+        total = 0.0
+        for row, (tx, ty), w in zip(rows, targets, weights):
+            total += w
+            for i in range(n):
+                wi = w * row[i]
+                atx[i] += wi * tx
+                aty[i] += wi * ty
+                ai = ata[i]
+                for j in range(i, n):
+                    ai[j] += wi * row[j]
+        for i in range(n):
+            for j in range(i):
+                ata[i][j] = ata[j][i]
+        for i in range(1, n):                      # never shrink the constant term
+            ata[i][i] += ridge * total
         cx = _solve(ata, atx)
         cy = _solve(ata, aty)
-        if cx is None or cy is None:
+        return (cx, cy) if cx is not None and cy is not None else None
+
+    def fit(self, samples: Sequence[tuple], weights: Optional[Sequence[float]] = None) -> bool:
+        """``samples``: [(features_or_offset, (screen_x, screen_y)[, head]), ...];
+        ``weights`` (optional) say how much each one counts. Returns whether it took."""
+        if len(samples) < self.MIN_SAMPLES:
+            return False
+        weights = list(weights) if weights is not None else [1.0] * len(samples)
+        parts = [self._split(s) for s in samples]
+        if all(len(x) == GAZE_FEATURES for x, _, _ in parts):
+            return self._fit_v3([x for x, _, _ in parts], [t for _, t, _ in parts], weights)
+        return self._fit_legacy(parts, weights)
+
+    def _fit_legacy(self, parts, weights) -> bool:
+        heads = [h for _, _, h in parts]
+        use_head = all(h is not None for h in heads) and len(parts) >= 9
+        head_ref = ((sum(h[0] for h in heads) / len(heads), sum(h[1] for h in heads) / len(heads))
+                    if use_head else (0.0, 0.0))
+        prev = (self.use_head, self.head_ref)
+        self.use_head, self.head_ref = use_head, head_ref
+        rows = [self._terms(o, h) for o, _, h in parts]
+        fit = self._weighted_fit(rows, [t for _, t, _ in parts], weights, self.RIDGE)
+        if fit is None:
             self.use_head, self.head_ref = prev
             return False
-        self.coeffs_x, self.coeffs_y = cx, cy
+        self.coeffs_x, self.coeffs_y = fit
+        self.version = 2 if use_head else 1
         return True
 
-    def apply(self, offset: tuple[float, float], head: Optional[tuple[float, float]] = None) -> Optional[tuple[float, float]]:
-        """The screen position (clamped 0–1) this offset maps to, or None
-        before calibration."""
+    def _fit_v3(self, feats: list, targets: list, weights: list) -> bool:
+        if len(feats) < self.MIN_SAMPLES_V3:
+            return False
+        total = sum(weights)
+        self.mean = [sum(w * f[k] for f, w in zip(feats, weights)) / total for k in range(GAZE_FEATURES)]
+        raws = [self._raw_v3(f) for f in feats]
+        n = len(raws[0])
+        self.scale = []
+        for k in range(1, n):
+            mu = sum(w * r[k] for r, w in zip(raws, weights)) / total
+            var = sum(w * (r[k] - mu) ** 2 for r, w in zip(raws, weights)) / total
+            self.scale.append(max(var ** 0.5, 1e-6))
+        rows = [[r[0]] + [v / s for v, s in zip(r[1:], self.scale)] for r in raws]
+
+        # Pick the ridge by 5-fold cross-validation: the setting that best
+        # predicts samples it wasn't fitted on.
+        folds = 5
+        best = None
+        for ridge in self.RIDGE_GRID:
+            err = 0.0
+            for k in range(folds):
+                tr = [i for i in range(len(rows)) if i % folds != k]
+                te = [i for i in range(len(rows)) if i % folds == k]
+                fit = self._weighted_fit([rows[i] for i in tr], [targets[i] for i in tr], [weights[i] for i in tr], ridge)
+                if fit is None:
+                    err = float("inf")
+                    break
+                cx, cy = fit
+                for i in te:
+                    px = sum(c * t for c, t in zip(cx, rows[i]))
+                    py = sum(c * t for c, t in zip(cy, rows[i]))
+                    err += weights[i] * math.hypot(px - targets[i][0], py - targets[i][1])
+            if best is None or err < best[0]:
+                best = (err, ridge)
+        fit = self._weighted_fit(rows, targets, weights, best[1])
+        if fit is None:
+            return False
+        self.coeffs_x, self.coeffs_y = fit
+        self.version, self.ridge, self.bias = 3, best[1], (0.0, 0.0)
+        self.use_head, self.head_ref = False, (0.0, 0.0)
+        return True
+
+    # -- using it ------------------------------------------------------------
+    def _raw_point(self, x: Sequence[float], head: Optional[tuple[float, float]] = None) -> tuple[float, float]:
+        terms = self._terms_v3(self._as_features(x, head)) if self.version == 3 else self._terms(tuple(x[:2]), head)
+        px = sum(c * t for c, t in zip(self.coeffs_x, terms)) + self.bias[0]
+        py = sum(c * t for c, t in zip(self.coeffs_y, terms)) + self.bias[1]
+        return px, py
+
+    def apply(self, x: Sequence[float], head: Optional[tuple[float, float]] = None) -> Optional[tuple[float, float]]:
+        """The screen position (clamped 0–1) for ``gaze_features(...)`` — or,
+        for older callers, a bare offset and head. None before calibration."""
         if not self.is_calibrated:
             return None
-        terms = self._terms(offset, head)
-        x = sum(c * t for c, t in zip(self.coeffs_x, terms))
-        y = sum(c * t for c, t in zip(self.coeffs_y, terms))
-        return (max(0.0, min(1.0, x)), max(0.0, min(1.0, y)))
+        px, py = self._raw_point(x, head)
+        return (max(0.0, min(1.0, px)), max(0.0, min(1.0, py)))
+
+    def recentre(self, x: Sequence[float], target: tuple[float, float] = (0.5, 0.5)) -> bool:
+        """You're looking at ``target``: shift the whole mapping so that's where
+        it lands. Fixes drift without recalibrating."""
+        if not self.is_calibrated:
+            return False
+        px, py = self._raw_point(x)
+        self.bias = (self.bias[0] + target[0] - px, self.bias[1] + target[1] - py)
+        return True
 
     def error(self, samples: Sequence[tuple]) -> Optional[float]:
         """Average distance, as a fraction of the screen, between where each
-        calibration dot was and where the fit puts that gaze. What the
-        calibration dialog reports as accuracy."""
+        sample's target was and where the mapping puts it."""
         if not self.is_calibrated or not samples:
             return None
         total = 0.0
         for s in samples:
-            o, t, h = self._split(s)
-            p = self.apply(o, h)
+            x, t, h = self._split(s)
+            p = self.apply(x, h)
             total += math.hypot(p[0] - t[0], p[1] - t[1])
         return total / len(samples)
 
+    # -- storing it ----------------------------------------------------------
     def to_json(self) -> str:
         if not self.is_calibrated:
             return ""
+        if self.version == 3:
+            return json.dumps({"v": 3, "x": _round(self.coeffs_x), "y": _round(self.coeffs_y),
+                               "mean": _round(self.mean), "scale": _round(self.scale), "bias": _round(self.bias)})
         data = {"x": self.coeffs_x, "y": self.coeffs_y}
         if self.use_head:
             data["head"] = list(self.head_ref)
@@ -641,17 +765,29 @@ class GazeCalibration:
         cal = cls()
         if not text:
             return cal
+
+        def nums(v, n):
+            return isinstance(v, list) and len(v) == n and all(isinstance(e, (int, float)) for e in v)
+
         try:
             data = json.loads(text)
             x, y = data["x"], data["y"]
+            if data.get("v") == 3:
+                if nums(x, 15) and nums(y, 15) and nums(data["mean"], GAZE_FEATURES) and nums(data["scale"], 14) \
+                        and nums(data.get("bias", [0, 0]), 2):
+                    cal.version = 3
+                    cal.mean = [float(v) for v in data["mean"]]
+                    cal.scale = [max(float(v), 1e-6) for v in data["scale"]]
+                    cal.bias = tuple(float(v) for v in data.get("bias", [0, 0]))
+                    cal.coeffs_x, cal.coeffs_y = [float(v) for v in x], [float(v) for v in y]
+                return cal
             head = data.get("head")
             n = 8 if head is not None else 6
-            if (isinstance(x, list) and isinstance(y, list) and len(x) == len(y) == n
-                    and all(isinstance(v, (int, float)) for v in x + y)):
+            if nums(x, n) and nums(y, n):
                 if head is not None:
-                    if not (isinstance(head, list) and len(head) == 2 and all(isinstance(v, (int, float)) for v in head)):
+                    if not nums(head, 2):
                         return cal
-                    cal.use_head = True
+                    cal.use_head, cal.version = True, 2
                     cal.head_ref = (float(head[0]), float(head[1]))
                 cal.coeffs_x, cal.coeffs_y = [float(v) for v in x], [float(v) for v in y]
         except (TypeError, ValueError, KeyError, AttributeError, json.JSONDecodeError):
@@ -660,13 +796,13 @@ class GazeCalibration:
 
 
 def steady_reading(readings: Sequence[tuple], blink_limit: float = 0.35) -> Optional[tuple]:
-    """One calibration dot's worth of frames -> a single (offset, head).
+    """One calibration dot's worth of frames -> one reading.
 
-    ``readings``: [(offset, head, blink), ...]. Frames taken mid-blink are
-    dropped (a closing lid drags the iris landmark down), then the per-axis
-    *median* is used rather than the mean, so a quick glance elsewhere or a
-    tracking glitch doesn't pull the dot's value off. None if too few usable
-    frames were left to trust.
+    ``readings``: [(features_or_offset, head, blink), ...]. Frames taken
+    mid-blink are dropped (a closing lid drags the iris landmark down), then
+    each value's *median* is used rather than the mean, so a quick glance
+    elsewhere or a tracking glitch doesn't pull the dot off. Returns
+    (features_or_offset, head), or None if too few usable frames were left.
     """
     usable = [r for r in readings if r[2] < blink_limit]
     if len(usable) < 5:
@@ -677,9 +813,10 @@ def steady_reading(readings: Sequence[tuple], blink_limit: float = 0.35) -> Opti
         mid = len(v) // 2
         return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2
 
-    offset = (med([r[0][0] for r in usable]), med([r[0][1] for r in usable]))
+    width = len(usable[0][0])
+    first = tuple(med([r[0][k] for r in usable]) for k in range(width))
     head = (med([r[1][0] for r in usable]), med([r[1][1] for r in usable]))
-    return offset, head
+    return first, head
 
 
 class DwellClick:

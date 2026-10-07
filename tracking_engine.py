@@ -32,7 +32,7 @@ import hand_pose
 from app_settings import Settings
 from camera import CameraCapabilities, CameraInfo, FrameGrabber, make_source
 from eye_tracker import EyeTracker, draw_eye_points
-from gesture_state import DwellClick, GazeCalibration, HeldPose, PinchGesture, PointerFilter, PointerStabilizer, \
+from gesture_state import DwellClick, GazeCalibration, gaze_features, HeldPose, PinchGesture, PointerFilter, PointerStabilizer, \
     ScrollGesture
 from hand_tracker import HandTracker, draw_landmarks
 from pointer_output import PointerOutput
@@ -103,6 +103,7 @@ class TrackingEngine(threading.Thread):
         self.last_gaze_offset: Optional[tuple[float, float]] = None   # read by the calibration dialog
         self.last_gaze_head: tuple[float, float] = (0.0, 0.0)
         self.last_gaze_blink: float = 0.0
+        self.last_gaze_features: Optional[tuple[float, ...]] = None
         self._blink_since: Optional[float] = None
         self._blink_fired = False
 
@@ -438,10 +439,12 @@ class TrackingEngine(threading.Thread):
         self.last_gaze_offset = m.offset
         self.last_gaze_head = m.head
         self.last_gaze_blink = m.blink
+        features = gaze_features(m.offset, m.head, m.per_eye, m.openness)
+        self.last_gaze_features = features
         left, top, width, height = self._desktop_rect(now)
         paused = self.output.paused
 
-        screen_pt = self.gaze_calibration.apply(m.offset, m.head)
+        screen_pt = self.gaze_calibration.apply(features)
         if screen_pt is None:
             self.dwell.reset()
             self._blink_since = None
