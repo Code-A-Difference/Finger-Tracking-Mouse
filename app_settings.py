@@ -33,6 +33,7 @@ HIDE_ACTIONS = ("tray", "minimize", "quit")
 RESOLUTIONS = ("auto", "640x480", "800x600", "960x540", "1280x720", "1280x960", "1920x1080")
 TRACKING_MODES = ("hand", "eye")
 EYE_CLICK_MODES = ("dwell", "blink", "both")
+EYE_CALIBRATION_DETAIL = ("thorough", "quick")
 
 
 @dataclass
@@ -77,6 +78,7 @@ class Settings:
     eye_dwell_radius: int = 4        # % of screen width the gaze may drift and still count as "steady"
     eye_blink_ms: int = 250          # how long an eye must stay shut to count as a deliberate blink
     eye_calibration: str = ""        # GazeCalibration.to_json(); "" = not calibrated yet
+    eye_calibration_detail: str = "thorough"   # "thorough": 25 points + a moving dot + a check (~70 s); "quick": 13 points
 
     # ---- optional hide gesture ----------------------------------------
     hide_gesture_enabled: bool = False
@@ -128,6 +130,7 @@ _CHOICES: dict[str, tuple[str, ...]] = {
     "camera_resolution": RESOLUTIONS,
     "tracking_mode": TRACKING_MODES,
     "eye_click_mode": EYE_CLICK_MODES,
+    "eye_calibration_detail": EYE_CALIBRATION_DETAIL,
 }
 
 
@@ -162,7 +165,7 @@ def validate(data: dict[str, Any]) -> Settings:
     clean["stream_url"] = clean["stream_url"].strip()[:500]
     if not GazeCalibration.from_json(clean["eye_calibration"]).is_calibrated:
         clean["eye_calibration"] = ""
-    clean["eye_calibration"] = clean["eye_calibration"][:2000]
+    clean["eye_calibration"] = clean["eye_calibration"][:8000]
     # The hide gesture only runs once its warning has been accepted.
     if not clean["hide_gesture_confirmed"]:
         clean["hide_gesture_enabled"] = False
