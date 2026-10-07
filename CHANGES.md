@@ -1,6 +1,6 @@
 # What changed
 
-## Unreleased
+## 2.7.0
 
 ### Sign-language typing — a fourth mode
 - **Type by fingerspelling** (the ASL alphabet) into any app. Teach your own
