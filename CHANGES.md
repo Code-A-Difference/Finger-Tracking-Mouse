@@ -1,6 +1,6 @@
 # What changed
 
-## Unreleased
+## 2.6.0
 
 ### Head pointer — a third tracking mode
 - **Steer with your nose, click with winks.** Settings → Pointer → Tracking
