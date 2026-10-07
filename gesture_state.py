@@ -1033,3 +1033,54 @@ class FaceSwitch:
         elif value < self.off_level:
             self._since = None
         return None
+
+
+class SnapLock:
+    """Snap: hold the pointer perfectly still once it settles, and let it go
+    only on a deliberate move.
+
+    Eye and head tracking are never perfectly steady — even smoothed, the
+    pointer shivers around where you're looking, which makes small targets
+    hard to hit. With snap on, once the pointer has stayed within ``radius``
+    for ``settle_seconds`` it locks to the middle of where it has been, and
+    stays locked — not a pixel of movement — until it is pulled more than
+    ``radius`` away; then it follows freely again until it settles somewhere
+    new. Positions are screen fractions (0–1).
+    """
+
+    def __init__(self, radius: float = 0.03, settle_seconds: float = 0.18) -> None:
+        self.radius = radius
+        self.settle_seconds = settle_seconds
+        self.reset()
+
+    def configure(self, radius: float, settle_seconds: Optional[float] = None) -> None:
+        self.radius = radius
+        if settle_seconds is not None:
+            self.settle_seconds = settle_seconds
+
+    def reset(self) -> None:
+        self.anchor: Optional[tuple[float, float]] = None   # where it's locked, if it is
+        self._start: Optional[tuple[float, float]] = None   # free: where the current settle began
+        self._since = 0.0
+        self._sum = [0.0, 0.0]
+        self._n = 0
+
+    @property
+    def locked(self) -> bool:
+        return self.anchor is not None
+
+    def update(self, pos: tuple[float, float], now: float) -> tuple[float, float]:
+        if self.anchor is not None:
+            if math.hypot(pos[0] - self.anchor[0], pos[1] - self.anchor[1]) <= self.radius:
+                return self.anchor
+            self.anchor = None                  # a deliberate move: let go and follow
+            self._start = None
+        if self._start is None or math.hypot(pos[0] - self._start[0], pos[1] - self._start[1]) > self.radius / 2:
+            self._start, self._since, self._sum, self._n = pos, now, [0.0, 0.0], 0
+        self._sum[0] += pos[0]
+        self._sum[1] += pos[1]
+        self._n += 1
+        if now - self._since >= self.settle_seconds and self._n >= 3:
+            self.anchor = (self._sum[0] / self._n, self._sum[1] / self._n)
+            return self.anchor
+        return pos

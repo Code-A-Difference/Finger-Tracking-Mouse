@@ -37,8 +37,8 @@ try:
     from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QGuiApplication, QIcon, QImage,
                                QKeySequence, QPainter, QPen, QPixmap, QShortcut)
     from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                                   QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
-                                   QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider,
+                                   QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
+                                   QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider,
                                    QSystemTrayIcon, QTabWidget, QVBoxLayout, QWidget)
 
     import app_settings
@@ -48,6 +48,7 @@ try:
         probe_resolutions, validate_stream_url
     from diagnostics import Heartbeat, Watchdog, setup_logging
     from gesture_state import GazeCalibration, steady_reading
+    import sign_language
     from pointer_output import PointerOutput, create_backend
     from tracking_engine import TrackingEngine
 except ImportError as exc:
@@ -460,6 +461,237 @@ class CalibrationDialog(QDialog):
         self.accept()
 
 
+class TeachSignsDialog(QDialog):
+    """Show Finger Mouse your fingerspelling, one sign at a time.
+
+    For each sign: the letter and how it's made are shown, there's a moment
+    to get your hand into shape, then two seconds of your hand are recorded
+    (move it a little — slightly different angles and distances make the
+    recognition sturdier). A sign that couldn't be seen clearly is tried again.
+    While this window is open, signs are recognised (shown live under "I see")
+    but never typed.
+    """
+
+    READY_MS = 1500
+    CAPTURE_MS = 2000
+    MIN_FRAMES = 12
+
+    def __init__(self, main: "MainWindow") -> None:
+        # Its own window, on top: you'll be looking at the camera preview and this, not the main window.
+        super().__init__(None, Qt.WindowType.WindowStaysOnTopHint)
+        self.main = main
+        self.setModal(True)
+        self.setWindowTitle("Teach your signs")
+        self.setMinimumSize(720, 540)
+        # A window of its own doesn't inherit the main window's look: give it the same dark theme.
+        sheet = main.styleSheet() if isinstance(main, QWidget) else ""
+        self.setStyleSheet(sheet + """
+            QDialog { background: #0e1626; color: #e8edf6; }
+            QListWidget { background: #111a2b; color: #e8edf6; border: 1px solid #27344a; border-radius: 8px;
+                          font-size: 14px; }
+            QListWidget::item:selected { background: #22d3ee; color: #05070d; }
+            QPushButton { background: #26344b; color: #e8edf6; border-radius: 8px; padding: 7px 12px; }
+            QPushButton:hover { background: #31425f; }
+            QProgressBar { background: #182338; border: none; border-radius: 4px; max-height: 8px; }
+            QProgressBar::chunk { background: #22d3ee; border-radius: 4px; }
+        """)
+        self.book = sign_language.SignBook.from_json(app_settings.load_signs_text())
+        self.queue: list[str] = []
+        self.current: Optional[str] = None
+        self.samples: list[tuple[float, ...]] = []
+        self._phase = "idle"
+        self._phase_start = 0.0
+        self._last_seq = -1
+        self._retried = False
+
+        outer = QHBoxLayout(self)
+        self.list = QListWidget()
+        self.list.setFixedWidth(190)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.itemSelectionChanged.connect(self._show_selected)
+        outer.addWidget(self.list)
+
+        right = QVBoxLayout()
+        self.letter = QLabel("")
+        self.letter.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.letter.setStyleSheet("font-size: 84px; font-weight: 800; color: #e8edf6;")
+        right.addWidget(self.letter)
+        self.how = QLabel("")
+        self.how.setWordWrap(True)
+        self.how.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.how.setStyleSheet("font-size: 15px; color: #aebbd0;")
+        right.addWidget(self.how)
+        self.status = QLabel("Pick “Teach all” to go through every sign, or choose one on the left.")
+        self.status.setWordWrap(True)
+        self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status.setStyleSheet("font-size: 14px; color: #fbbf24;")
+        right.addWidget(self.status)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100)
+        self.bar.setTextVisible(False)
+        right.addWidget(self.bar)
+        self.seeing = QLabel("I see: —")
+        self.seeing.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.seeing.setStyleSheet("font-size: 15px; color: #34d399;")
+        right.addWidget(self.seeing)
+        right.addStretch(1)
+
+        row = QHBoxLayout()
+        self.teach_all = QPushButton("Teach all")
+        self.teach_all.setToolTip("Every sign you haven't taught yet, in order. Already taught all? Then every sign again.")
+        self.teach_all.clicked.connect(self._teach_all)
+        self.teach_one = QPushButton("Teach this one")
+        self.teach_one.clicked.connect(self._teach_selected)
+        self.skip = QPushButton("Skip")
+        self.skip.clicked.connect(self._skip)
+        self.forget = QPushButton("Forget this one")
+        self.forget.clicked.connect(self._forget_selected)
+        for b in (self.teach_all, self.teach_one, self.skip, self.forget):
+            row.addWidget(b)
+        right.addLayout(row)
+        close = QPushButton("Done")
+        close.clicked.connect(self.accept)
+        right.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
+        outer.addLayout(right, 1)
+
+        self._fill_list()
+        self.list.setCurrentRow(0)
+        self._tick = QTimer(self, interval=33)
+        self._tick.timeout.connect(self._step)
+        self._tick.start()
+        if self.main.engine is not None:
+            self.main.engine.teaching = True
+
+    # -- list ------------------------------------------------------------
+    def _label(self, sign: str) -> str:
+        name = {"SPACE": "Space", "DELETE": "Delete", "ENTER": "Enter (optional)"}.get(sign, sign)
+        return f"{'✓' if sign in self.book.samples else '  '}  {name}"
+
+    def _fill_list(self) -> None:
+        row = self.list.currentRow()
+        self.list.clear()
+        for sign in sign_language.SIGNS:
+            self.list.addItem(self._label(sign))
+        if row >= 0:
+            self.list.setCurrentRow(row)
+
+    def _selected(self) -> Optional[str]:
+        row = self.list.currentRow()
+        return sign_language.SIGNS[row] if 0 <= row < len(sign_language.SIGNS) else None
+
+    def _show_sign(self, sign: Optional[str]) -> None:
+        if sign is None:
+            self.letter.setText("")
+            self.how.setText("")
+            return
+        self.letter.setText({"SPACE": "␣", "DELETE": "⌫", "ENTER": "↵"}.get(sign, sign))
+        name = {"SPACE": "Space", "DELETE": "Delete", "ENTER": "Enter"}.get(sign)
+        self.how.setText((f"{name}: " if name else "") + sign_language.HOW_TO[sign])
+
+    def _show_selected(self) -> None:
+        if self._phase == "idle":
+            self._show_sign(self._selected())
+
+    # -- teaching --------------------------------------------------------
+    def _teach_all(self) -> None:
+        todo = [s for s in sign_language.SIGNS if s not in self.book.samples and s != sign_language.ENTER]
+        self.queue = todo or [s for s in sign_language.SIGNS if s != sign_language.ENTER]
+        self._next()
+
+    def _teach_selected(self) -> None:
+        sign = self._selected()
+        if sign:
+            self.queue = [sign]
+            self._next()
+
+    def _skip(self) -> None:
+        if self._phase != "idle":
+            self._next()
+
+    def _forget_selected(self) -> None:
+        sign = self._selected()
+        if sign and sign in self.book.samples:
+            self.book.forget(sign)
+            self._save()
+
+    def _next(self) -> None:
+        self._retried = False
+        if not self.queue:
+            self.current = None
+            self._phase = "idle"
+            self.bar.setValue(0)
+            taught = len(self.book.taught)
+            self.status.setText(f"{taught} of {len(sign_language.SIGNS)} signs taught. Close this window and sign "
+                                "into any app — hold each letter steady for a moment to type it.")
+            self._show_sign(self._selected())
+            return
+        self.current = self.queue.pop(0)
+        self.list.setCurrentRow(sign_language.SIGNS.index(self.current))
+        self._start_ready()
+
+    def _start_ready(self) -> None:
+        self._show_sign(self.current)
+        self._phase, self._phase_start = "ready", time.monotonic()
+        self.samples = []
+        self.status.setText("Get ready — make this sign with your signing hand.")
+
+    def _step(self) -> None:
+        engine = self.main.engine
+        if engine is not None:
+            seen, conf = engine.sign_seen
+            name = {"SPACE": "space", "DELETE": "delete", "ENTER": "enter"}.get(seen or "", seen)
+            self.seeing.setText(f"I see: {name}  ({int(conf * 100)}% sure)" if seen else
+                                ("I see: your hand, but no sign I know yet" if engine.last_sign_features else
+                                 "I see: no hand"))
+        if self._phase == "idle":
+            return
+        elapsed = (time.monotonic() - self._phase_start) * 1000
+        if self._phase == "ready":
+            self.bar.setValue(int(100 * elapsed / self.READY_MS))
+            if elapsed >= self.READY_MS:
+                self._phase, self._phase_start = "capture", time.monotonic()
+                self.status.setText("Hold it… move your hand a little — closer, further, a slight turn.")
+                self._last_seq = engine.sign_frame_seq if engine else -1
+            return
+        # capture
+        self.bar.setValue(int(100 * elapsed / self.CAPTURE_MS))
+        if engine is not None and engine.sign_frame_seq != self._last_seq and engine.last_sign_features is not None:
+            self._last_seq = engine.sign_frame_seq
+            self.samples.append(engine.last_sign_features)
+        if elapsed >= self.CAPTURE_MS:
+            if len(self.samples) < self.MIN_FRAMES:
+                if not self._retried:
+                    self._retried = True
+                    self.status.setText("Couldn't see your hand clearly — once more. Keep it inside the camera view.")
+                    self._phase, self._phase_start = "ready", time.monotonic()
+                    self.samples = []
+                    return
+                self.status.setText(f"Skipped {self.current}: the hand wasn't visible enough.")
+                self._next()
+                return
+            self.book.teach(self.current, self.samples)
+            self._save()
+            self._next()
+
+    def _save(self) -> None:
+        try:
+            app_settings.save_signs_text(self.book.to_json())
+        except OSError as exc:
+            QMessageBox.warning(self, "Couldn't save your signs", str(exc))
+            return
+        if self.main.engine is not None:
+            self.main.engine.reload_signs()
+        self._fill_list()
+        if self.main.settings_dialog is not None:
+            self.main.settings_dialog.update_sign_status()
+
+    def done(self, result: int) -> None:  # noqa: D401 (Qt name)
+        self._tick.stop()
+        if self.main.engine is not None:
+            self.main.engine.teaching = False
+        super().done(result)
+
+
 # ---------------------------------------------------------------------------
 # Settings dialog
 # ---------------------------------------------------------------------------
@@ -474,10 +706,11 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(560)
         self._loading = True
         self.controls: dict[str, Any] = {}
+        self.twins: list[tuple[str, Any]] = []
 
         tabs = QTabWidget()
         for build, name in ((self._pointer_tab, "Pointer"), (self._click_tab, "Click && drag"),
-                            (self._scroll_tab, "Scrolling"), (self._head_tab, "Head pointer"), (self._eye_tab, "Eye tracking"),
+                            (self._scroll_tab, "Scrolling"), (self._head_tab, "Head pointer"), (self._eye_tab, "Eye tracking"), (self._sign_tab, "Sign language"),
                             (self._camera_tab, "Camera"), (self._gestures_tab, "Hide gesture"),
                             (self._advanced_tab, "Advanced")):
             # Each page scrolls rather than squeezing its text when the window is short.
@@ -544,7 +777,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(slider)
         if hint:
             self._hint(layout, hint)
-        self.controls[key] = (slider, value, fmt)
+        self._register(key, (slider, value, fmt))
         return slider
 
     def _check(self, layout: QVBoxLayout, key: str, label: str, hint: str = "") -> QCheckBox:
@@ -553,7 +786,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(box)
         if hint:
             self._hint(layout, hint)
-        self.controls[key] = box
+        self._register(key, box)
         return box
 
     def _choice(self, layout: QVBoxLayout, key: str, label: str, options: list[tuple[str, str]],
@@ -572,14 +805,15 @@ class SettingsDialog(QDialog):
         layout.addLayout(row)
         if hint:
             self._hint(layout, hint)
-        self.controls[key] = combo
+        self._register(key, combo)
         return combo
 
     # -- tabs ---------------------------------------------------------------
     def _pointer_tab(self) -> QWidget:
         page, l = self._page()
         self._choice(l, "tracking_mode", "Tracking mode",
-                     [("hand", "Hand gestures"), ("head", "Head pointer (nose + winks)"), ("eye", "Eye gaze (beta)")],
+                     [("hand", "Hand gestures"), ("head", "Head pointer (nose + winks)"), ("eye", "Eye gaze (beta)"),
+                      ("sign", "Sign language typing")],
                      "Move the pointer with a hand pinching to click, by moving your head (the nose steers, "
                      "winks click), or by looking at the screen. The settings below are for hand mode; the "
                      "head pointer and eye gaze have their own tabs.")
@@ -653,6 +887,12 @@ class SettingsDialog(QDialog):
         self._slider(l, "head_dead_zone", "Steadiness", 0, 100, "{}%",
                      "Head movement slower than this is ignored, so tremor or breathing doesn't drift the pointer.")
         self._slider(l, "head_smoothing", "Smoothing", 0, 100, "{}%")
+        self._check(l, "snap_enabled", "Snap — hold the pointer still once it settles",
+                    "Once the pointer has stayed in one spot for a moment it locks there, perfectly still, "
+                    "and only lets go when you clearly move away. Makes small buttons much easier to hit.")
+        self._slider(l, "snap_strength", "Snap strength", 1, 10, "{}% of the screen",
+                     "How far you have to move to pull the pointer out of a snap. Higher is steadier; lower "
+                     "lets go sooner.")
         recentre = QPushButton("Re-centre now")
         recentre.setToolTip("Point at the spot: makes where your head is now the centre. Like a mouse: puts the "
                             "pointer in the middle of the screen.")
@@ -677,6 +917,44 @@ class SettingsDialog(QDialog):
         l.addStretch(1)
         return page
 
+    def _sign_tab(self) -> QWidget:
+        page, l = self._page()
+        self._hint(l, "Type by fingerspelling (the ASL alphabet) into whatever app has the keyboard. First show "
+                      "Finger Mouse your own signs — about two seconds each — so it recognises <i>your</i> hand. "
+                      "Then hold each letter steady for a moment to type it; relax your hand for a moment between "
+                      "double letters. You also teach a sign for space and one for delete.")
+        self.sign_status = QLabel()
+        self.sign_status.setObjectName("value")
+        l.addWidget(self.sign_status)
+        self.teach_button = QPushButton("Teach signs…")
+        self.teach_button.clicked.connect(self.main.open_teach_signs)
+        l.addWidget(self.teach_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self._hint(l, "Teaching needs tracking running in sign mode: pick Sign language typing under Pointer → "
+                      "Tracking mode, press Start tracking, then come back here.")
+        self._slider(l, "sign_hold_ms", "Hold to type", 250, 1500, "{} ms", step=50,
+                     hint="How long to hold a sign before it types. Shorter is faster; longer makes fewer mistakes.")
+        self._slider(l, "sign_confidence", "Certainty", 5, 60, "{}%",
+                     hint="How clearly a sign must match one you taught rather than the next closest before it "
+                          "types. Raise it if similar letters (M/N, A/S/E) get mixed up.")
+        self._check(l, "sign_capitals", "Type capital letters")
+        l.addStretch(1)
+        return page
+
+    def update_sign_status(self) -> None:
+        book = sign_language.SignBook.from_json(app_settings.load_signs_text())
+        n = len(book.taught)
+        missing = [x for x in sign_language.LETTERS if x not in book.samples]
+        text = f"{n} of {len(sign_language.SIGNS)} signs taught"
+        if n and missing:
+            text += f" — not yet: {', '.join(missing[:8])}{'…' if len(missing) > 8 else ''}"
+        for extra, name in ((sign_language.SPACE, "space"), (sign_language.DELETE, "delete")):
+            if n and extra not in book.samples:
+                text += f"; no {name} sign yet"
+        self.sign_status.setText(text if n else "No signs taught yet")
+        ready = self.main.is_tracking() and self.main.settings.tracking_mode == "sign"
+        self.teach_button.setEnabled(ready)
+        self.teach_button.setToolTip("" if ready else "Switch to Sign language typing and press Start tracking first.")
+
     def _eye_tab(self) -> QWidget:
         page, l = self._page()
         self._hint(l, "Look at the screen to move the pointer instead of using your hand. Needs a short "
@@ -694,6 +972,12 @@ class SettingsDialog(QDialog):
                      hint="How long an eye must stay shut to count as a deliberate blink, not an ordinary one.")
         self._slider(l, "eye_smoothing", "Smoothing", 0, 100, "{}%",
                      hint="Gaze tracking is noisier than hand tracking, so this usually wants to sit higher.")
+        self._check(l, "snap_enabled", "Snap — hold the pointer still once it settles",
+                    "Once the pointer has stayed in one spot for a moment it locks there, perfectly still, "
+                    "and only lets go when you clearly move away. Makes small buttons much easier to hit.")
+        self._slider(l, "snap_strength", "Snap strength", 1, 10, "{}% of the screen",
+                     "How far you have to move to pull the pointer out of a snap. Higher is steadier; lower "
+                     "lets go sooner.")
         l.addSpacing(6)
         self.calibration_status = QLabel()
         self.calibration_status.setObjectName("value")
@@ -828,10 +1112,18 @@ class SettingsDialog(QDialog):
         return page
 
     # -- state ------------------------------------------------------------------
+    def _register(self, key: str, control: Any) -> None:
+        """A setting can appear on more than one tab (snap is on both the head
+        and the eye tab); every copy is kept, and all of them reload."""
+        if key in self.controls:
+            self.twins.append((key, control))
+        else:
+            self.controls[key] = control
+
     def load(self, s: Settings) -> None:
         was = self._loading
         self._loading = True
-        for key, control in self.controls.items():
+        for key, control in list(self.controls.items()) + self.twins:
             value = getattr(s, key)
             if isinstance(control, tuple):
                 slider, label, fmt = control
@@ -846,12 +1138,15 @@ class SettingsDialog(QDialog):
         self.populate_cameras()
         self.update_camera_info()
         self.update_calibration_status()
+        self.update_sign_status()
         self._loading = was
 
     def _set(self, key: str, value: Any) -> None:
         if self._loading:
             return
         self.main.change_settings(**{key: value})
+        if any(k == key for k, _ in self.twins):
+            self.load(self.main.settings)       # bring the setting's other copy into line
 
     def populate_cameras(self) -> None:
         was = self._loading
@@ -1088,6 +1383,9 @@ class MainWindow(QMainWindow):
         if self.settings.tracking_mode == "eye":
             self.subtitle.setText("Look at the screen to move the pointer. Hold your gaze still (or blink) "
                                   "to click — calibrate first in Settings → Eye tracking.")
+        elif self.settings.tracking_mode == "sign":
+            self.subtitle.setText("Fingerspell to type into any app: hold each letter steady for a moment. "
+                                  "Teach your signs first in Settings → Sign language.")
         elif self.settings.tracking_mode == "head":
             mouth = {"drag": " Open your mouth to drag.", "scroll": " Open your mouth and nod to scroll.",
                      "click": " Open your mouth to click.", "off": ""}[self.settings.head_mouth_action]
@@ -1185,6 +1483,8 @@ class MainWindow(QMainWindow):
         if new.tracking_mode != old.tracking_mode:
             if self.settings_dialog is not None:
                 self.settings_dialog.update_calibration_status()
+                self.settings_dialog.update_sign_status()
+            self.settings_dialog.update_sign_status()
         if new.camera != old.camera:
             self._select_quick_camera()
         if self.engine is not None:
@@ -1223,6 +1523,16 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Calibrated", f"Eye tracking is calibrated. {note}" + chr(10) * 2 +
                                     "If it drifts later (you moved, the laptop moved), use Re-centre in "
                                     "Settings → Eye tracking: one second, no recalibrating.")
+
+    def open_teach_signs(self) -> None:
+        if self.engine is None or self.output is None or self.settings.tracking_mode != "sign":
+            QMessageBox.information(self, "Start sign mode first",
+                "Pick Sign language typing under Pointer → Tracking mode and press Start tracking, then "
+                "teach your signs.")
+            return
+        TeachSignsDialog(self).exec()
+        if self.settings_dialog is not None:
+            self.settings_dialog.update_sign_status()
 
     def recentre_head(self) -> None:
         if self.engine is None or self.settings.tracking_mode != "head":
@@ -1345,6 +1655,7 @@ class MainWindow(QMainWindow):
             self.tray_toggle.setText("Stop tracking")
         if self.settings_dialog is not None:
             self.settings_dialog.update_calibration_status()
+            self.settings_dialog.update_sign_status()
         self._set_status("starting", "Starting the camera…")
         if sys.platform.startswith("linux") and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
             self._set_status("starting", "Wayland desktops usually block apps from moving the pointer. If nothing "
@@ -1375,6 +1686,7 @@ class MainWindow(QMainWindow):
         if self.settings_dialog is not None:
             self.settings_dialog.update_camera_info()
             self.settings_dialog.update_calibration_status()
+            self.settings_dialog.update_sign_status()
         if self._quitting:
             QApplication.quit()
 

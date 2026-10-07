@@ -371,3 +371,40 @@ def test_head_mode_losing_the_face_drops_a_drag():
     frames = [[face(), {}]] * 3 + [[face(), {"jawOpen": 0.8}]] * 8 + [None] * 3
     calls, *_ = run(frames, settings=settings)
     assert len(of(calls, "down")) == 1 and len(of(calls, "up")) == 1
+
+
+# -- sign-language typing -------------------------------------------------------
+
+def test_sign_mode_types_a_held_letter_once_and_maps_delete_to_backspace(monkeypatch):
+    import random
+    import tracking_engine
+    from sign_language import SignBook
+    from test_sign_language import examples
+
+    rng = random.Random(9)
+    book = SignBook()
+    for sign in ("B", "U", "W", "I"):
+        book.teach(sign, examples(sign, rng))
+    book.teach("DELETE", examples("A", rng))          # a fist stands in for the delete sign
+    monkeypatch.setattr(tracking_engine, "load_signs_text", lambda: book.to_json())
+
+    settings = Settings(tracking_mode="sign", sign_hold_ms=300)
+    hold = lambda pose, n: [make_hand(**pose)] * n
+    frames = hold(dict(extended=("index", "middle")), 25)                 # U, held ~0.8 s
+    frames += [None] * 12                                                 # hand away: releases
+    frames += hold(dict(extended=("pinky",)), 25)                         # I
+    frames += hold(dict(extended=()), 25)                                 # fist = DELETE
+    calls, output, events, *_ = run(frames, settings=settings)
+
+    typed = [c for c in calls if c[0] in ("type", "key")]
+    assert typed == [("type", "u"), ("type", "i"), ("key", "backspace")], typed
+    assert ("typed", "U") in events and ("typed", "DELETE") in events
+    assert not of(calls, "move"), "sign mode must never move the pointer"
+
+
+def test_sign_mode_with_nothing_taught_types_nothing(monkeypatch):
+    import tracking_engine
+
+    monkeypatch.setattr(tracking_engine, "load_signs_text", lambda: "")
+    calls, *_ = run([make_hand(extended=("index",))] * 30, settings=Settings(tracking_mode="sign"))
+    assert not [c for c in calls if c[0] in ("type", "key")]

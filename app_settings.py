@@ -31,7 +31,7 @@ SCREEN_MODES = ("primary", "all")
 SCROLL_POSES = ("two_fingers", "index")
 HIDE_ACTIONS = ("tray", "minimize", "quit")
 RESOLUTIONS = ("auto", "640x480", "800x600", "960x540", "1280x720", "1280x960", "1920x1080")
-TRACKING_MODES = ("hand", "eye", "head")
+TRACKING_MODES = ("hand", "eye", "head", "sign")
 EYE_CLICK_MODES = ("dwell", "blink", "both")
 EYE_CALIBRATION_DETAIL = ("thorough", "quick")
 HEAD_POINTER_MODES = ("relative", "absolute")
@@ -97,6 +97,15 @@ class Settings:
     head_mouth_action: str = "drag"  # mouth open: "drag", "scroll" (nod to scroll), "click", "off"
     head_smile_action: str = "off"   # held smile: "off", "pause" (toggle), "double_click", "right_click"
 
+    # ---- snap (eye and head modes) ---------------------------------------
+    snap_enabled: bool = False       # lock the pointer still once it settles; it lets go on a deliberate move
+    snap_strength: int = 3           # how far (% of the screen) it can be pulled before it lets go
+
+    # ---- sign-language typing (tracking_mode "sign") --------------------
+    sign_hold_ms: int = 600          # how long to hold a sign before it types
+    sign_confidence: int = 20        # % — how clearly it must match one taught sign over the next best
+    sign_capitals: bool = False      # type letters as capitals
+
     # ---- optional hide gesture ----------------------------------------
     hide_gesture_enabled: bool = False
     hide_gesture_confirmed: bool = False  # the user has read and accepted the warning
@@ -145,6 +154,9 @@ _RANGES: dict[str, tuple[float, float]] = {
     "head_smoothing": (0, 100),
     "head_reach": (10, 80),
     "head_wink_ms": (100, 600),
+    "snap_strength": (1, 10),
+    "sign_hold_ms": (250, 1500),
+    "sign_confidence": (5, 60),
 }
 _CHOICES: dict[str, tuple[str, ...]] = {
     "screen": SCREEN_MODES,
@@ -247,6 +259,27 @@ def config_dir() -> Path:
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     return base / APP_NAME
+
+
+def signs_path() -> Path:
+    """Your taught fingerspelling signs (sign_language.SignBook), kept apart from
+    settings.json: they're much bigger, and Restore defaults must not wipe them."""
+    return config_dir() / "signs.json"
+
+
+def load_signs_text() -> str:
+    try:
+        return signs_path().read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def save_signs_text(text: str) -> None:
+    path = signs_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def settings_path() -> Path:
