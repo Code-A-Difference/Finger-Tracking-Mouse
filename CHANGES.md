@@ -1,5 +1,23 @@
 # What changed
 
+## Unreleased
+
+### Sign-language typing — a fourth mode
+- **Type by fingerspelling** (the ASL alphabet) into any app. Teach your own
+  signs once (about two seconds each, with a space and a delete sign of your
+  choice); Finger Mouse then recognises your hand by comparing it with what
+  you showed it, and refuses to type when a sign doesn't clearly match.
+- Hold a sign steady to type it once; relax between double letters. Hold
+  time, certainty and capital letters in Settings → Sign language.
+- Hand shape is measured independently of position, size and tilt, while
+  keeping which way the hand points (so K/P and G/Q stay distinct).
+- Keyboard output added on Windows (Unicode SendInput), macOS and Linux.
+
+### Snap, for eye tracking and the head pointer
+- Optional (off by default): once the pointer settles it locks completely
+  still, and only lets go on a deliberate move past the snap strength. Dwell
+  clicking still judges steadiness on your real gaze.
+
 ## 2.6.0
 
 ### Head pointer — a third tracking mode

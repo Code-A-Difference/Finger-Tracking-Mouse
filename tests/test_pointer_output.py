@@ -46,6 +46,12 @@ class Recorder(PointerBackend):
     def right_click(self, x, y):
         self._log("right_click", x, y)
 
+    def type_text(self, text):
+        self._log("type", text)
+
+    def key(self, name):
+        self._log("key", name)
+
 
 def settle(out, timeout=2.0):
     end = time.monotonic() + timeout
@@ -184,3 +190,16 @@ def test_right_click_reaches_the_backend():
     settle(out)
     out.stop()
     assert ("right_click", 40, 50) in rec.calls
+
+
+def test_typing_and_keys_reach_the_backend_in_order():
+    rec = Recorder()
+    out = PointerOutput(rec)
+    out.start()
+    out.type_text("h")
+    out.type_text("i")
+    out.key("backspace")
+    out.type_text(" ")
+    settle(out)
+    out.stop()
+    assert [c for c in rec.calls if c[0] in ("type", "key")] == [("type", "h"), ("type", "i"), ("key", "backspace"), ("type", " ")]

@@ -61,6 +61,14 @@ class PointerBackend:
     def right_click(self, x: int, y: int) -> None:
         raise NotImplementedError
 
+    def type_text(self, text: str) -> None:
+        """Type ``text`` into whatever has keyboard focus (sign-language typing)."""
+        raise NotImplementedError
+
+    def key(self, name: str) -> None:
+        """Press and release one key: "backspace" or "enter"."""
+        raise NotImplementedError
+
     def wheel(self, notches: float) -> float:
         """Scroll by up to ``notches``; return how much was actually sent.
         Backends that only do whole steps send what they can and the rest
@@ -76,7 +84,9 @@ class WindowsBackend(PointerBackend):
     """SendInput: the same path a real mouse driver's input takes."""
 
     name = "windows-sendinput"
-    INPUT_MOUSE = 0
+    INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
+    KEYUP, UNICODE = 0x0002, 0x0004
+    VK = {"backspace": 0x08, "enter": 0x0D}
     MOVE, LEFTDOWN, LEFTUP, WHEEL = 0x0001, 0x0002, 0x0004, 0x0800
     RIGHTDOWN, RIGHTUP = 0x0008, 0x0010
     VIRTUALDESK, ABSOLUTE = 0x4000, 0x8000
@@ -97,15 +107,19 @@ class WindowsBackend(PointerBackend):
                         ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
                         ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
 
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+                        ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
         class _INPUTUNION(ctypes.Union):
             # KEYBDINPUT/HARDWAREINPUT are smaller than MOUSEINPUT on every
             # architecture, so this union has the size SendInput expects.
-            _fields_ = [("mi", MOUSEINPUT)]
+            _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT)]
 
         class INPUT(ctypes.Structure):
             _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
 
-        self._MOUSEINPUT, self._INPUT = MOUSEINPUT, INPUT
+        self._MOUSEINPUT, self._KEYBDINPUT, self._INPUT = MOUSEINPUT, KEYBDINPUT, INPUT
         user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
         user32.SendInput.restype = wintypes.UINT
         user32.GetSystemMetrics.argtypes = (ctypes.c_int,)
@@ -171,6 +185,26 @@ class WindowsBackend(PointerBackend):
 
     def right_click(self, x: int, y: int) -> None:
         self._send(self._move_input(x, y), self._mouse(self.RIGHTDOWN), self._mouse(self.RIGHTUP))
+
+    def _key_input(self, vk: int = 0, scan: int = 0, flags: int = 0):
+        inp = self._INPUT(type=self.INPUT_KEYBOARD)
+        inp.u.ki = self._KEYBDINPUT(vk, scan, flags, 0, self.MARKER)
+        return inp
+
+    def type_text(self, text: str) -> None:
+        # KEYEVENTF_UNICODE types the character itself, whatever the keyboard layout.
+        inputs = []
+        units = text.encode("utf-16-le")
+        for i in range(0, len(units), 2):
+            code = int.from_bytes(units[i:i + 2], "little")
+            inputs += [self._key_input(scan=code, flags=self.UNICODE),
+                       self._key_input(scan=code, flags=self.UNICODE | self.KEYUP)]
+        if inputs:
+            self._send(*inputs)
+
+    def key(self, name: str) -> None:
+        vk = self.VK[name]
+        self._send(self._key_input(vk=vk), self._key_input(vk=vk, flags=self.KEYUP))
 
     def wheel(self, notches: float) -> float:
         self._wheel_carry += notches * self.WHEEL_DELTA
@@ -254,6 +288,20 @@ class MacBackend(PointerBackend):
         count = self._count_for(x, y) if down else max(1, self._click_count)
         self._post(Q.kCGEventLeftMouseDown if down else Q.kCGEventLeftMouseUp, x, y, count)
 
+    def type_text(self, text: str) -> None:
+        Q = self.Q
+        for ch in text:
+            for down in (True, False):
+                event = Q.CGEventCreateKeyboardEvent(None, 0, down)
+                Q.CGEventKeyboardSetUnicodeString(event, len(ch.encode("utf-16-le")) // 2, ch)
+                Q.CGEventPost(Q.kCGHIDEventTap, event)
+
+    def key(self, name: str) -> None:
+        Q = self.Q
+        code = {"backspace": 51, "enter": 36}[name]
+        for down in (True, False):
+            Q.CGEventPost(Q.kCGHIDEventTap, Q.CGEventCreateKeyboardEvent(None, code, down))
+
     def right_click(self, x: int, y: int) -> None:
         Q = self.Q
         self._post(Q.kCGEventMouseMoved, x, y)
@@ -315,6 +363,12 @@ class PyAutoGUIBackend(PointerBackend):
     def right_click(self, x: int, y: int) -> None:
         self.p.click(x=x, y=y, button="right", _pause=False)
 
+    def type_text(self, text: str) -> None:
+        self.p.write(text, _pause=False)
+
+    def key(self, name: str) -> None:
+        self.p.press(name, _pause=False)
+
     def wheel(self, notches: float) -> float:
         self._wheel_carry += notches
         clicks = int(self._wheel_carry)
@@ -343,10 +397,11 @@ def create_backend() -> PointerBackend:
 
 @dataclass
 class _Command:
-    kind: str                # move, click, press, release, scroll, release_all
+    kind: str                # move, click, right_click, press, release, scroll, type, key, release_all
     x: int = 0
     y: int = 0
     amount: float = 0.0
+    text: str = ""
 
 
 class PointerOutput(threading.Thread):
@@ -402,6 +457,13 @@ class PointerOutput(threading.Thread):
 
     def right_click(self, x: int, y: int) -> None:
         self._put(_Command("right_click", x, y))
+
+    def type_text(self, text: str) -> None:
+        if text:
+            self._put(_Command("type", text=text))
+
+    def key(self, name: str) -> None:
+        self._put(_Command("key", text=name))
 
     def press(self, x: int, y: int) -> None:
         self._put(_Command("press", x, y))
@@ -509,6 +571,10 @@ class PointerOutput(threading.Thread):
         elif c.kind == "right_click":
             b.right_click(c.x, c.y)
             self._last_set = (c.x, c.y)
+        elif c.kind == "type":
+            b.type_text(c.text)
+        elif c.kind == "key":
+            b.key(c.text)
         elif c.kind == "press":
             b.move(c.x, c.y, False)
             b.button(True, c.x, c.y)

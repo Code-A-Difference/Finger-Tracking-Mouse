@@ -31,10 +31,12 @@ import numpy as np
 import eye_pose
 import hand_pose
 import head_pose
+import sign_language
+from app_settings import load_signs_text
 from app_settings import Settings
 from camera import CameraCapabilities, CameraInfo, FrameGrabber, make_source
 from eye_tracker import EyeTracker, draw_eye_points
-from gesture_state import DwellClick, FaceSwitch, GazeCalibration, gaze_features, HeadPointer, HeldPose, PinchGesture, \
+from gesture_state import DwellClick, FaceSwitch, SnapLock, GazeCalibration, gaze_features, HeadPointer, HeldPose, PinchGesture, \
     PointerFilter, PointerStabilizer, ScrollGesture, WinkClick
 from hand_tracker import HandTracker, draw_landmarks
 from pointer_output import PointerOutput
@@ -47,7 +49,8 @@ CAMERA_STALL_AFTER = 2.5       # s without a frame before the camera is restarte
 PREVIEW_FPS = 15
 
 CAMERA_KEYS = ("camera", "camera_resolution", "stream_url")
-TRACKER_FACTORIES: dict[str, Callable[[], Any]] = {"hand": HandTracker, "eye": EyeTracker, "head": EyeTracker}
+TRACKER_FACTORIES: dict[str, Callable[[], Any]] = {"hand": HandTracker, "eye": EyeTracker, "head": EyeTracker,
+                                                   "sign": HandTracker}
 FACE_MODES = ("eye", "head")   # modes that run the face model
 
 
@@ -121,6 +124,16 @@ class TrackingEngine(threading.Thread):
         self._head_dragging = False
         self._head_scroll_ref: Optional[float] = None
         self._head_recentre = False
+        self.snap = SnapLock(s.snap_strength / 100)
+
+        # sign-language typing
+        self.sign_book = sign_language.SignBook.from_json(load_signs_text())
+        self.sign_typer = sign_language.SignTyper(s.sign_hold_ms / 1000, s.sign_confidence / 100)
+        self.last_sign_features: Optional[tuple[float, ...]] = None   # read by the teaching dialog
+        self.sign_frame_seq = 0                                        # bumps every frame a hand was seen
+        self.sign_seen: tuple[Optional[str], float] = (None, 0.0)     # what it currently recognises
+        self.teaching = False            # the teaching dialog is open: recognise, but never type
+        self._reload_signs = False
 
         # diagnostics
         self.infer_started: Optional[float] = None
@@ -250,6 +263,11 @@ class TrackingEngine(threading.Thread):
         self.head.configure(new.head_pointer_mode, new.head_speed, new.head_acceleration, new.head_dead_zone,
                             new.head_smoothing, new.head_reach)
         self.wink.hold_seconds = new.head_wink_ms / 1000
+        self.snap.configure(new.snap_strength / 100)
+        self.sign_typer.hold_seconds = new.sign_hold_ms / 1000
+        self.sign_typer.min_confidence = new.sign_confidence / 100
+        if not new.snap_enabled:
+            self.snap.reset()
         if new.head_pointer_mode != old.head_pointer_mode:
             self.head.reset()
             self.head.recentre()
@@ -287,6 +305,8 @@ class TrackingEngine(threading.Thread):
             self._eye_absent(now)
         elif self.settings.tracking_mode == "head":
             self._head_absent(now)
+        elif self.settings.tracking_mode == "sign":
+            self._sign_frame(None, now)
         else:
             self._hand_absent(now)
         g = self.grabber
@@ -364,6 +384,10 @@ class TrackingEngine(threading.Thread):
                 self._head_absent(now)
             else:
                 self._head_present(measure, now)
+        elif s.tracking_mode == "sign":
+            landmarks = result
+            measure = None
+            self._sign_frame(sign_language.sign_features(landmarks, w / h) if landmarks is not None else None, now)
         else:
             landmarks = result
             measure = hand_pose.measure(landmarks, w / h) if landmarks is not None else None
@@ -460,6 +484,7 @@ class TrackingEngine(threading.Thread):
 
     def _eye_absent(self, now: float) -> None:
         self._face_frames = 0
+        self.snap.reset()
         self.gaze_filter.reset()
         self.dwell.reset()
         self._blink_since = None
@@ -486,13 +511,16 @@ class TrackingEngine(threading.Thread):
             return
 
         fx, fy = self.gaze_filter(screen_pt[0], screen_pt[1], now)
+        steady = (fx, fy)                      # dwell judges steadiness on the real gaze, not the snapped point
+        if s.snap_enabled:
+            fx, fy = self.snap.update((fx, fy), now)
         target = (left + fx * (width - 1), top + fy * (height - 1))
         position = (min(left + width - 1, max(left, round(target[0]))),
                    min(top + height - 1, max(top, round(target[1]))))
 
         dwell_clicked = False
         if s.eye_click_mode in ("dwell", "both") and not paused:
-            dwell_clicked = self.dwell.update((fx, fy), now)
+            dwell_clicked = self.dwell.update(steady, now)
         else:
             self.dwell.reset()
 
@@ -517,6 +545,52 @@ class TrackingEngine(threading.Thread):
             self.post("gesture", "click")
         self._update_eye_label(True, now, paused)
 
+    # -- sign-language typing -------------------------------------------------
+    def reload_signs(self) -> None:
+        """Called from the UI thread after the signs file changed."""
+        self._reload_signs = True
+
+    def _sign_frame(self, features: Optional[tuple[float, ...]], now: float) -> None:
+        s = self.settings
+        if self._reload_signs:
+            self._reload_signs = False
+            self.sign_book = sign_language.SignBook.from_json(load_signs_text())
+            self.sign_typer.reset()
+        self.last_sign_features = features
+        if features is not None:
+            self.sign_frame_seq += 1
+            self._hand_frames += 1
+        else:
+            self._hand_frames = 0
+        sign, confidence = self.sign_book.recognise(features)
+        self.sign_seen = (sign, confidence)
+        typed = self.sign_typer.update(sign, confidence, now)
+        paused = self.output.paused
+        if typed and not self.teaching and not paused:
+            if typed == sign_language.SPACE:
+                self.output.type_text(" ")
+            elif typed == sign_language.DELETE:
+                self.output.key("backspace")
+            elif typed == sign_language.ENTER:
+                self.output.key("enter")
+            else:
+                self.output.type_text(typed if s.sign_capitals else typed.lower())
+            self.post("typed", typed)
+
+        if not self.sign_book.taught:
+            g, text = "uncalibrated", "No signs taught yet — Settings → Sign language → Teach signs"
+        elif features is None:
+            g, text = "no_hand", "Show your signing hand to the camera"
+        elif self.teaching:
+            g, text = "ready", f"Teaching — seeing {sign or '…'}"
+        elif paused:
+            g, text = "paused", "Paused while you use the mouse or keyboard"
+        elif sign is None:
+            g, text = "open", "Signing — hold a letter steady to type it"
+        else:
+            g, text = "pinched", f"{sign} — {int(self.sign_typer.progress(now) * 100)}%"
+        self._gesture, self._label = g, text
+
     # -- head pointer ---------------------------------------------------------
     def recentre_head(self) -> None:
         """Called from the UI thread: absolute mode re-takes "straight ahead";
@@ -525,6 +599,7 @@ class TrackingEngine(threading.Thread):
 
     def _head_absent(self, now: float) -> None:
         self._face_frames = 0
+        self.snap.reset()
         self.head.reset()
         self.wink.reset()
         self.mouth.reset()
@@ -629,6 +704,11 @@ class TrackingEngine(threading.Thread):
         self._head_pos = (min(left + width - 1, max(left, self._head_pos[0])),
                           min(top + height - 1, max(top, self._head_pos[1])))
         position = (round(self._head_pos[0]), round(self._head_pos[1]))
+        if s.snap_enabled and not self._head_dragging:
+            # snap in screen fractions, so the strength means the same on any screen
+            sx, sy = self.snap.update(((self._head_pos[0] - left) / max(1, width - 1),
+                                       (self._head_pos[1] - top) / max(1, height - 1)), now)
+            position = (round(left + sx * (width - 1)), round(top + sy * (height - 1)))
         if not paused and position != self._last_cursor:
             self.output.move(*position)
         self._last_cursor = position
@@ -721,6 +801,17 @@ class TrackingEngine(threading.Thread):
             if landmarks is not None and s.show_landmarks:
                 color = {"dwelling": (60, 220, 120), "gazing": (255, 200, 60)}.get(self._gesture, (180, 180, 180))
                 draw_eye_points(preview, landmarks, color)
+        elif s.tracking_mode == "sign":
+            if landmarks is not None and s.show_landmarks:
+                draw_landmarks(preview, landmarks)
+            seen, _conf = self.sign_seen
+            if seen is not None:
+                text = {"SPACE": "space", "DELETE": "delete", "ENTER": "enter"}.get(seen, seen)
+                big = 1.6 if len(text) == 1 else 0.9
+                cv2.putText(preview, text, (pw - (70 if len(text) == 1 else 130), ph - 24), cv2.FONT_HERSHEY_SIMPLEX,
+                            big, (60, 220, 120), 3, cv2.LINE_AA)
+                bar = int((pw - 20) * self.sign_typer.progress(now))
+                cv2.rectangle(preview, (10, ph - 8), (10 + bar, ph - 4), (60, 220, 120), -1)
         elif s.tracking_mode == "head":
             if landmarks is not None and s.show_landmarks:
                 color = {"pinched": (60, 220, 120), "dragging": (60, 180, 255), "scrolling": (60, 180, 255),

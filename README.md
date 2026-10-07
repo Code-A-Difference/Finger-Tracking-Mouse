@@ -71,6 +71,27 @@ hand: **Settings → Pointer → Tracking mode → Head pointer**. No calibratio
   scroll (nod up or down while it's open), or to click.
 - **A held smile** can pause and resume the pointer, double-click or
   right-click (off by default, so a laugh doesn't do anything).
+- **Snap** (also in eye tracking): once the pointer settles it locks
+  perfectly still, and only lets go when you clearly move away.
+
+### Typing with sign language
+
+**Settings → Pointer → Tracking mode → Sign language typing** types
+fingerspelling (the ASL manual alphabet) into whatever app has the keyboard.
+
+1. Press Start tracking, then **Settings → Sign language → Teach signs**:
+   each letter is shown with how it's made; hold it for two seconds, moving
+   your hand a little. Then a space sign and a delete sign of your choice.
+   About a minute for everything. Your signs are saved and kept separately
+   from your settings.
+2. Sign into any app: **hold a letter steady for a moment and it types.**
+   For a double letter, relax your hand for a moment between the two.
+
+It recognises *your* hand by comparing it with what you showed it, and it
+won't type anything when a sign doesn't clearly match one you taught. J and
+Z (moving letters) are taught and recognised by the shape they end on.
+Letters that look alike (M/N, A/S/E/T) are the hardest: teach them
+carefully, and raise **Certainty** if they get mixed up.
 
 ### Eye tracking
 

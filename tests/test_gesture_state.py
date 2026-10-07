@@ -584,3 +584,28 @@ def test_steady_reading_takes_the_median_of_every_feature():
     frames = [(tuple(float(k) for k in range(9)), (0.0, 0.6), 0.0)] * 9 + [(tuple(9.0 for _ in range(9)), (0.0, 0.6), 0.0)] * 2
     features, head = steady_reading(frames)
     assert features == tuple(float(k) for k in range(9))
+
+
+def test_snap_locks_once_settled_and_holds_through_jitter():
+    from gesture_state import SnapLock
+    import random
+
+    rng = random.Random(1)
+    snap = SnapLock(radius=0.03, settle_seconds=0.15)
+    out = [snap.update((0.5 + rng.gauss(0, 0.004), 0.4 + rng.gauss(0, 0.004)), i / 30) for i in range(30)]
+    assert snap.locked
+    tail = out[10:]
+    assert len(set(tail)) == 1, "once locked, jitter must not move the pointer at all"
+    assert abs(tail[0][0] - 0.5) < 0.01 and abs(tail[0][1] - 0.4) < 0.01
+
+
+def test_snap_lets_go_on_a_deliberate_move_and_follows():
+    from gesture_state import SnapLock
+
+    snap = SnapLock(radius=0.03, settle_seconds=0.1)
+    for i in range(10):
+        snap.update((0.5, 0.5), i / 30)
+    assert snap.locked
+    assert snap.update((0.52, 0.5), 0.4) == snap.anchor          # small pull: stays put
+    moved = snap.update((0.6, 0.5), 0.45)                         # big move: follows straight away
+    assert moved == (0.6, 0.5) and not snap.locked
