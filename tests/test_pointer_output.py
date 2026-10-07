@@ -43,6 +43,9 @@ class Recorder(PointerBackend):
         self._log("wheel", notches)
         return notches
 
+    def right_click(self, x, y):
+        self._log("right_click", x, y)
+
 
 def settle(out, timeout=2.0):
     end = time.monotonic() + timeout
@@ -171,3 +174,13 @@ def test_scroll_passes_through(output):
     out.scroll(-1.25)
     settle(out)
     assert [c for c in b.calls if c[0] == "wheel"] == [("wheel", 0.5), ("wheel", -1.25)]
+
+
+def test_right_click_reaches_the_backend():
+    rec = Recorder()
+    out = PointerOutput(rec)
+    out.start()
+    out.right_click(40, 50)
+    settle(out)
+    out.stop()
+    assert ("right_click", 40, 50) in rec.calls

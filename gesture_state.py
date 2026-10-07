@@ -20,6 +20,8 @@ frame by frame without a webcam:
                           coordinates from a short look-at-these-dots
                           calibration, and applies it afterwards.
 * ``steady_reading``    — one calibration dot's frames -> one robust reading.
+* ``HeadPointer``, ``WinkClick``, ``FaceSwitch`` — the head pointer: the
+                          nose steers, winks click, mouth/smile are switches.
 * ``DwellClick``        — eye-tracking's click: hold the (calibrated, smoothed)
                           gaze still over one spot for a moment.
 
@@ -869,3 +871,165 @@ class DwellClick:
             self._since = now   # so progress() doesn't jump back to 100% mid-cooldown
             return True
         return False
+
+
+# ---------------------------------------------------------------------------
+# Head pointer: the nose steers, winks click, the mouth drags or scrolls
+# ---------------------------------------------------------------------------
+
+class HeadPointer:
+    """Turns nose movement (head_pose.HeadMeasure.nose, in face widths) into
+    pointer movement, as a fraction of the screen.
+
+    ``relative`` (the default) works like a mouse: the pointer moves by how
+    far the nose moved since the last frame, more for a quick movement than a
+    slow one (pointer acceleration), so small careful movements are precise
+    and a flick crosses the screen. Turning your head back doesn't bring the
+    pointer back with it — exactly like lifting and moving a mouse.
+
+    ``absolute`` maps the nose position directly: straight ahead is the
+    centre of the screen and turning ``reach`` face widths takes you to an
+    edge. Simple to understand; needs re-centring if you shift in your seat.
+
+    Either way the nose is One-Euro smoothed first, and movement slower than
+    ``dead_zone`` (face widths per second) is ignored, so a steady head
+    holds a steady pointer instead of drifting with tremor or breathing.
+    """
+
+    def __init__(self, mode: str = "relative", speed: float = 45, acceleration: float = 50,
+                 dead_zone: float = 20, smoothing: float = 50, reach: float = 35) -> None:
+        self.filter = PointerFilter(smoothing)
+        self.configure(mode, speed, acceleration, dead_zone, smoothing, reach)
+        self.reset()
+
+    def configure(self, mode: str, speed: float, acceleration: float, dead_zone: float,
+                  smoothing: float, reach: float) -> None:
+        self.mode = mode if mode in ("relative", "absolute") else "relative"
+        self.gain = 0.4 + 3.6 * max(1.0, min(100.0, speed)) / 100        # screen widths per face width
+        self.accel = max(0.0, min(100.0, acceleration)) / 100 * 2.5
+        self.dead_zone = max(0.0, min(100.0, dead_zone)) / 100 * 0.12     # face widths per second
+        self.reach = max(10.0, min(80.0, reach)) / 100                     # face widths to the screen edge
+        self.filter.set_smoothing(smoothing)
+
+    def reset(self) -> None:
+        """Forget the last position (face lost, or a click/drag froze the pointer)."""
+        self.filter.reset()
+        self._last: Optional[Point] = None
+        self._last_t: Optional[float] = None
+
+    def recentre(self) -> None:
+        """Absolute mode: wherever the head is now becomes the screen centre."""
+        self.neutral: Optional[Point] = None
+
+    neutral: Optional[Point] = None
+
+    def update(self, nose: Point, now: float, frozen: bool = False):
+        """Feed one frame. Relative: returns (dx, dy) in screen fractions.
+        Absolute: returns (x, y) in 0–1. ``frozen`` (a wink or a drag is
+        starting) holds the pointer and forgets the movement meanwhile, so
+        letting go doesn't make it jump."""
+        if frozen:
+            # Forget the movement entirely — the smoothing filter's lag too —
+            # so the pointer picks up from wherever the head settles.
+            self.filter.reset()
+            self._last = self._last_t = None
+            return None if self.mode == "absolute" else (0.0, 0.0)
+        fx, fy = self.filter(nose[0], nose[1], now)
+        if self.mode == "absolute":
+            if self.neutral is None:
+                self.neutral = (fx, fy)
+            x = 0.5 + (fx - self.neutral[0]) / (2 * self.reach)
+            y = 0.5 + (fy - self.neutral[1]) / (2 * self.reach * 0.7)   # nodding has less range than turning
+            return (max(0.0, min(1.0, x)), max(0.0, min(1.0, y)))
+
+        if self._last is None or self._last_t is None:
+            self._last, self._last_t = (fx, fy), now
+            return (0.0, 0.0)
+        dt = max(1e-3, now - self._last_t)
+        dx, dy = fx - self._last[0], fy - self._last[1]
+        self._last, self._last_t = (fx, fy), now
+        speed = math.hypot(dx, dy) / dt
+        if speed < self.dead_zone:
+            return (0.0, 0.0)
+        gain = self.gain * (1 + self.accel * min(speed / 0.6, 3.0))
+        return (dx * gain, dy * gain * 1.4)          # nods are smaller than turns: give them more reach
+
+
+class WinkClick:
+    """A one-eyed wink, held briefly, is a click: left eye left click, right
+    eye right click. An ordinary blink closes both eyes, so it never counts.
+    Fires once per wink; both eyes must open again before the next."""
+
+    CLOSED, OPEN = 0.5, 0.3
+
+    def __init__(self, hold_seconds: float = 0.2) -> None:
+        self.hold_seconds = hold_seconds
+        self.reset()
+
+    def reset(self) -> None:
+        self._side: Optional[str] = None
+        self._since: Optional[float] = None
+        self._armed = True
+
+    @property
+    def closing(self) -> bool:
+        """An eye is on its way to a wink: hold the pointer still."""
+        return self._side is not None
+
+    def update(self, left: float, right: float, now: float) -> Optional[str]:
+        """Feed eye closure (0 open .. 1 shut). Returns "left" / "right" once per wink."""
+        if left < self.OPEN and right < self.OPEN:
+            self._armed = True
+            self._side = self._since = None
+            return None
+        if left >= self.CLOSED and right >= self.CLOSED:      # both shut: a blink, not a wink
+            self._side = self._since = None
+            return None
+        side = "left" if left >= self.CLOSED and right < self.OPEN else \
+               "right" if right >= self.CLOSED and left < self.OPEN else None
+        if side is None:
+            return None
+        if side != self._side:
+            self._side, self._since = side, now
+            return None
+        if self._armed and now - self._since >= self.hold_seconds:
+            self._armed = False
+            return side
+        return None
+
+
+class FaceSwitch:
+    """A face expression (mouth open, smile) used as a switch, with
+    hysteresis: on above ``on``, off below ``off``, and it has to stay on for
+    ``hold_seconds`` before it counts, so a word or a passing grin doesn't."""
+
+    def __init__(self, on: float, off: float, hold_seconds: float) -> None:
+        self.on_level, self.off_level, self.hold_seconds = on, off, hold_seconds
+        self.reset()
+
+    def reset(self) -> None:
+        self.active = False
+        self._since: Optional[float] = None
+
+    @property
+    def pending(self) -> bool:
+        """Above the threshold but not yet held long enough."""
+        return self._since is not None and not self.active
+
+    def update(self, value: float, now: float) -> Optional[str]:
+        """Returns "start" when it switches on, "end" when it switches off."""
+        if self.active:
+            if value < self.off_level:
+                self.active = False
+                self._since = None
+                return "end"
+            return None
+        if value >= self.on_level:
+            if self._since is None:
+                self._since = now
+            elif now - self._since >= self.hold_seconds:
+                self.active = True
+                return "start"
+        elif value < self.off_level:
+            self._since = None
+        return None

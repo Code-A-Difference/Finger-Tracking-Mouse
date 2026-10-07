@@ -51,6 +51,27 @@ pointing hand used to move, and scrolling only starts from a steady hand
 that isn't pinching. The pointer stays still while you scroll. There's a
 dead zone, a speed cap and a gentle start.
 
+### Head pointer
+
+A third way to steer, for anyone who can move their head more easily than a
+hand: **Settings → Pointer → Tracking mode → Head pointer**. No calibration.
+
+- **Your nose steers.** It's the steadiest point on a face — talking or
+  smiling doesn't move it — and it's measured in face widths, so sitting
+  closer to or further from the camera doesn't change the speed. *Like a
+  mouse* (the default) moves the pointer by how far and how fast you move,
+  so careful movements are precise and a flick crosses the screen; *Point at
+  the spot* maps straight ahead to the centre. A dead zone ignores tremor and
+  breathing.
+- **Wink to click**: left eye left-click, right eye right-click. Ordinary
+  blinks close both eyes and never click, and the pointer holds still while
+  you wink so the click lands where you aimed. A long blink can click
+  instead, for anyone who finds winking hard.
+- **Open your mouth** to drag (the button stays down while it's open), to
+  scroll (nod up or down while it's open), or to click.
+- **A held smile** can pause and resume the pointer, double-click or
+  right-click (off by default, so a laugh doesn't do anything).
+
 ### Eye tracking
 
 An alternative to hand gestures: Settings → Pointer → Tracking mode → **Eye
