@@ -578,17 +578,17 @@ class TrackingEngine(threading.Thread):
             self.post("typed", typed)
 
         if not self.sign_book.taught:
-            g, text = "uncalibrated", "No signs taught yet — Settings → Sign language → Teach signs"
+            g, text = "uncalibrated", "No signs taught yet, Settings → Sign language → Teach signs"
         elif features is None:
             g, text = "no_hand", "Show your signing hand to the camera"
         elif self.teaching:
-            g, text = "ready", f"Teaching — seeing {sign or '…'}"
+            g, text = "ready", f"Teaching, seeing {sign or '…'}"
         elif paused:
             g, text = "paused", "Paused while you use the mouse or keyboard"
         elif sign is None:
-            g, text = "open", "Signing — hold a letter steady to type it"
+            g, text = "open", "Signing, hold a letter steady to type it"
         else:
-            g, text = "pinched", f"{sign} — {int(self.sign_typer.progress(now) * 100)}%"
+            g, text = "pinched", f"{sign}, {int(self.sign_typer.progress(now) * 100)}%"
         self._gesture, self._label = g, text
 
     # -- head pointer ---------------------------------------------------------
@@ -648,7 +648,7 @@ class TrackingEngine(threading.Thread):
                     self.output.right_click(*here)
                 self.post("gesture", "click")
         if self._head_paused:
-            self._gesture, self._label = "paused", "Paused — smile again to resume"
+            self._gesture, self._label = "paused", "Paused, smile again to resume"
             return
 
         # Clicks: a one-eyed wink (left = left click, right = right click), or a long blink.
@@ -723,20 +723,20 @@ class TrackingEngine(threading.Thread):
         if paused:
             g, text = "paused", "Paused while you use the mouse"
         elif self._head_dragging:
-            g, text = "dragging", "Dragging — close your mouth to drop"
+            g, text = "dragging", "Dragging, close your mouth to drop"
         elif scrolling:
-            g, text = "scrolling", "Scrolling — nod up or down; close your mouth to stop"
+            g, text = "scrolling", "Scrolling, nod up or down; close your mouth to stop"
         elif self.wink.closing:
             g, text = "pinched", "Wink…"
         else:
-            g, text = "tracking", "Head pointer — wink to click" if s.head_click == "wink" else "Head pointer — long blink to click"
+            g, text = "tracking", "Head pointer, wink to click" if s.head_click == "wink" else "Head pointer, long blink to click"
         self._gesture, self._label = g, text
 
     def _update_eye_label(self, calibrated: bool, now: float, paused: bool) -> None:
         if paused:
             g, text = "paused", "Paused while you use the mouse"
         elif not calibrated:
-            g, text = "uncalibrated", "Not calibrated yet — Settings → Eye tracking → Calibrate"
+            g, text = "uncalibrated", "Not calibrated yet, Settings → Eye tracking → Calibrate"
         elif self.dwell.progress(now) > 0:
             g, text = "dwelling", f"Hold your gaze… {int(self.dwell.progress(now) * 100)}%"
         else:
@@ -770,16 +770,16 @@ class TrackingEngine(threading.Thread):
         if paused:
             g, text = "paused", "Paused while you use the mouse"
         elif self.scroll.active:
-            g, text = "scrolling", "Scrolling — move up or down; lower your fingers to stop"
+            g, text = "scrolling", "Scrolling, move up or down; lower your fingers to stop"
         elif self.hide.progress(now) > 0:
             g, text = "hide", f"Hold to hide Finger Mouse… {int(self.hide.progress(now) * 100)}%"
         elif state == "dragging":
-            g, text = "dragging", "Dragging — open your fingers to drop"
+            g, text = "dragging", "Dragging, open your fingers to drop"
         elif state in ("closing", "pressed"):
-            g, text = "pinched", ("Pinch locked — release to click, hold to drag"
+            g, text = "pinched", ("Pinch locked, release to click, hold to drag"
                                   if self.settings.drag_enabled else "Clicked")
         elif state == "ready":
-            g, text = "ready", "Ready — pinch thumb and index to click"
+            g, text = "ready", "Ready, pinch thumb and index to click"
         elif not self.settings.click_enabled:
             g, text = "pointing", "Pointing (clicking is off)"
         else:

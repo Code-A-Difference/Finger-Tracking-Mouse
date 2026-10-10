@@ -4,7 +4,7 @@ Settings live in one JSON file in the per-user config folder
 (``%APPDATA%\\Finger Mouse`` on Windows, ``~/Library/Application Support/Finger
 Mouse`` on macOS, ``$XDG_CONFIG_HOME/Finger Mouse`` elsewhere). Every value is
 checked on load, so a hand-edited or half-written file can never stop the app
-from starting — anything unreadable falls back to its default.
+from starting, anything unreadable falls back to its default.
 
 No Qt or camera imports here, so it's usable from tests and the tracking
 thread alike.
@@ -76,7 +76,7 @@ class Settings:
     scroll_reverse: bool = False
 
     # ---- eye tracking ---------------------------------------------------
-    eye_smoothing: int = 65          # like `smoothing`, but gaze needs steadier defaults — it's noisier
+    eye_smoothing: int = 65          # like `smoothing`, but gaze needs steadier defaults, it's noisier
     eye_click_mode: str = "dwell"    # "dwell" (look and hold), "blink" or "both"
     eye_dwell_ms: int = 700          # how long a steady gaze takes to click
     eye_dwell_radius: int = 4        # % of screen width the gaze may drift and still count as "steady"
@@ -103,7 +103,7 @@ class Settings:
 
     # ---- sign-language typing (tracking_mode "sign") --------------------
     sign_hold_ms: int = 600          # how long to hold a sign before it types
-    sign_confidence: int = 20        # % — how clearly it must match one taught sign over the next best
+    sign_confidence: int = 20        # %, how clearly it must match one taught sign over the next best
     sign_capitals: bool = False      # type letters as capitals
 
     # ---- optional hide gesture ----------------------------------------

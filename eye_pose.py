@@ -13,13 +13,13 @@ Landmark numbering (MediaPipe FaceMesh, with iris refinement):
 ("right"/"left" are the subject's own; Finger Mouse mirrors the picture
 before this runs, so on screen they appear the way the subject expects.)
 
-Gaze itself is read as *where the iris sits inside its own eye socket* —
+Gaze itself is read as *where the iris sits inside its own eye socket*
 how far from centre, as a fraction of the socket's width and height. That
 number moves with the eyeball, not with the head: turning your head while
 holding your gaze still barely changes it, which is what makes a short,
 per-user calibration (gaze.py) enough to turn it into a screen position.
 What it can't see is a head *rotation* that points the eyes at a different
-part of the screen without the eyeball itself turning much — keeping your
+part of the screen without the eyeball itself turning much, keeping your
 head roughly facing the camera, the way the calibration was done, is what
 keeps it accurate.
 """
@@ -72,15 +72,15 @@ class EyeMeasure:
     offset: tuple[float, float]   # iris position within its socket, -1..1 per axis, both eyes averaged
     blink_left: float             # 0 (open) .. 1 (closed)
     blink_right: float
-    blink: float                  # max of the two — either eye closing counts as a blink
+    blink: float                  # max of the two, either eye closing counts as a blink
     scale: float                  # inter-ocular distance, in frame-height units
     # Where the nose tip sits relative to the middle of the eyes, in
     # inter-ocular distances: a cheap, steady stand-in for head turn (x) and
     # nod (y). Calibration uses it so a small head movement no longer throws
     # the pointer across the screen.
     head: tuple[float, float] = (0.0, 0.0)
-    # Each eye's own offset (right, left) — they disagree in useful ways near
-    # the screen edges — and how open the eyes are. Calibration feeds all of it
+    # Each eye's own offset (right, left), they disagree in useful ways near
+    # the screen edges, and how open the eyes are. Calibration feeds all of it
     # to the mapping (gesture_state.gaze_features).
     per_eye: tuple[tuple[float, float], tuple[float, float]] = ((0.0, 0.0), (0.0, 0.0))
     openness: float = 0.0

@@ -2,7 +2,7 @@
 without ever blocking the rest of the app.
 
 * ``list_cameras()`` names the webcams the way the capture backend numbers
-  them — DirectShow on Windows, V4L2 on Linux, AVFoundation on macOS — so the
+  them, DirectShow on Windows, V4L2 on Linux, AVFoundation on macOS, so the
   list says "Integrated Webcam", not "Camera 0", wherever the OS will say.
 * ``CameraSource`` is the interface every input implements. ``OpenCVCamera``
   is a webcam; ``NetworkStreamCamera`` reads an MJPEG/RTSP stream, which is
@@ -132,7 +132,7 @@ def probe_camera_indices(limit: int = 6) -> list[CameraInfo]:
 
 
 def _directshow_names() -> list[str]:
-    """Video capture devices via DirectShow — the same list and order
+    """Video capture devices via DirectShow, the same list and order
     OpenCV's CAP_DSHOW backend uses for its indices."""
     import ctypes
     from ctypes import wintypes

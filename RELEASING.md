@@ -46,8 +46,8 @@ Secrets and variables → Actions**. None ever belong in the repository, and
 the workflow only uses them for tag builds, never for pull requests.
 
 **Signing reduces warnings; it doesn't remove them overnight.** Windows
-SmartScreen also weighs an app's *reputation* — how many people have
-downloaded and run it without trouble — so a newly signed app, or the first
+SmartScreen also weighs an app's *reputation*, how many people have
+downloaded and run it without trouble, so a newly signed app, or the first
 release under a new certificate, can still show "Windows protected your PC"
 for a while. macOS is stricter but clearer: a Developer-ID-signed *and
 notarized* app opens without the "unidentified developer" block. Nothing in

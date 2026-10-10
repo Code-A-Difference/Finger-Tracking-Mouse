@@ -72,7 +72,7 @@ def hand_scale(pts: Sequence[Vec]) -> float:
 
 
 def finger_state(pts: Sequence[Vec], finger: str) -> str:
-    """Extended, folded, or in between — from the finger's own joint angles.
+    """Extended, folded, or in between, from the finger's own joint angles.
 
     A straight finger has its tip well beyond its middle joint (seen from the
     wrist) and its segments roughly in line. A folded one curls its tip back

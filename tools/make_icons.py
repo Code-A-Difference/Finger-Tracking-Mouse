@@ -4,7 +4,7 @@
 
 Writes assets/icon.png (window and tray), assets/FingerMouse.ico (Windows)
 and assets/FingerMouse.icns (macOS). The design is the app's own pointer
-halo — a ring with a dot — on a dark rounded square. Needs Pillow.
+halo, a ring with a dot, on a dark rounded square. Needs Pillow.
 """
 
 from pathlib import Path

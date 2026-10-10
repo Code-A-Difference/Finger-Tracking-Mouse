@@ -12,7 +12,7 @@
 
 ## 2.7.0
 
-### Sign-language typing — a fourth mode
+### Sign-language typing, a fourth mode
 - **Type by fingerspelling** (the ASL alphabet) into any app. Teach your own
   signs once (about two seconds each, with a space and a delete sign of your
   choice); Finger Mouse then recognises your hand by comparing it with what
@@ -30,12 +30,12 @@
 
 ## 2.6.0
 
-### Head pointer — a third tracking mode
+### Head pointer, a third tracking mode
 - **Steer with your nose, click with winks.** Settings → Pointer → Tracking
   mode → Head pointer; its own Settings tab. No calibration.
 - The nose tip is used because it's the most rigid point on a face, and it's
   measured in face widths, so the speed doesn't change with distance from the
-  camera. Two styles: *Like a mouse* (relative, with acceleration — the
+  camera. Two styles: *Like a mouse* (relative, with acceleration, the
   default) and *Point at the spot* (absolute, with Re-centre). One Euro
   smoothing plus a dead zone for tremor and breathing.
 - **Left wink = left click, right wink = right click**, held for a moment
@@ -57,12 +57,12 @@
   the grid points), then five check points it never trained on. Settings →
   Eye tracking → Calibration still offers the quick 13-point version.
 - **An honest accuracy number.** After a thorough calibration, the error
-  reported is measured on those check points — then they're added to the
+  reported is measured on those check points, then they're added to the
   calibration too.
 - **The mapping looks at more of your eyes.** Each eye separately (they
   disagree usefully near the edges), how open your eyes are (the eyelid
   follows the eyeball up and down, which the iris barely does inside its
-  socket — this is what fixes vertical accuracy), and head turn and nod with
+  socket, this is what fixes vertical accuracy), and head turn and nod with
   how they interact with gaze: fifteen terms instead of eight, fitted to all
   those samples by weighted ridge regression, with the smoothing amount
   chosen automatically by testing on held-back samples.
@@ -100,22 +100,22 @@
   reads where your iris sits in its own eye socket (MediaPipe's face and
   iris landmarks), which moves with the eyeball and barely with the head,
   and maps it onto the screen with a short calibration (look at nine dots
-  in turn) — same idea as the hand-mode setup, one screen instead of one
+  in turn), same idea as the hand-mode setup, one screen instead of one
   step.
 - **Click by holding your gaze still** (dwell, the default) **or by a
-  deliberate blink**, or both — Settings → Eye tracking. A quick, ordinary
+  deliberate blink**, or both, Settings → Eye tracking. A quick, ordinary
   blink doesn't count; only one held past a configurable threshold does.
   Dwelling tolerates a little drift (the "steadiness" setting) rather than
   demanding a frozen stare, and re-arms only once you've looked away, so it
   can't click twice by lingering.
-- Runs on the same four-thread engine as hand mode — its own gesture state
+- Runs on the same four-thread engine as hand mode, its own gesture state
   (`gesture_state.GazeCalibration`, `DwellClick`), its own model
   (`face_landmarker.task`, pinned by SHA-256 next to the hand model), but
   the same camera thread, pointer output thread and watchdog. Switching
   modes tears down and rebuilds just the tracker, live.
 - Best with your head reasonably still and facing the camera; a head turn
   (not just an eye movement) can throw off the mapping more than hand
-  tracking's equivalent wobble would. No drag gesture yet — click only.
+  tracking's equivalent wobble would. No drag gesture yet, click only.
 
 ## 2.2.0
 

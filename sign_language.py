@@ -9,14 +9,14 @@ delete signs too.
 
 Pure Python, no camera or MediaPipe, so it is tested with synthetic hands.
 
-* ``sign_features``  — one hand (MediaPipe's 21 landmarks) -> a feature vector
+* ``sign_features``, one hand (MediaPipe's 21 landmarks) -> a feature vector
                        that ignores where the hand is, how big it looks and how
                        it's tilted, but keeps the shape, and keeps which way
                        it points (K and P, G and Q differ only in that).
-* ``SignBook``       — the signs you taught, and recognition by comparing with
+* ``SignBook``, the signs you taught, and recognition by comparing with
                        them (nearest neighbours), refusing to guess when the
                        hand doesn't clearly match one sign.
-* ``SignTyper``      — hold a sign steady for a moment to type it once; change
+* ``SignTyper``, hold a sign steady for a moment to type it once; change
                        or relax the hand to type it again.
 """
 
@@ -42,7 +42,7 @@ HOW_TO = {
     "G": "Index and thumb point sideways, parallel, the rest curled.",
     "H": "Index and middle fingers point sideways together, thumb tucked.",
     "I": "Little finger up, the rest a fist.",
-    "J": "Little finger up, then trace a J — hold the shape where the J ends.",
+    "J": "Little finger up, then trace a J, hold the shape where the J ends.",
     "K": "Index and middle up in a V, thumb touching the middle finger between them.",
     "L": "Thumb and index make an L.",
     "M": "Thumb tucked under the first three fingers.",
@@ -58,10 +58,10 @@ HOW_TO = {
     "W": "Index, middle and ring fingers up, apart.",
     "X": "Index finger hooked, the rest a fist.",
     "Y": "Thumb and little finger out, the rest folded.",
-    "Z": "Index finger traces a Z — hold the shape where it ends, index pointing.",
-    SPACE: "Your choice — an open hand with all five fingers spread works well.",
-    DELETE: "Your choice — a thumbs-down works well.",
-    ENTER: "Optional, your choice — for a new line or to send. A flat hand facing sideways works well.",
+    "Z": "Index finger traces a Z, hold the shape where it ends, index pointing.",
+    SPACE: "Your choice, an open hand with all five fingers spread works well.",
+    DELETE: "Your choice, a thumbs-down works well.",
+    ENTER: "Optional, your choice, for a new line or to send. A flat hand facing sideways works well.",
 }
 
 TIPS = (4, 8, 12, 16, 20)
@@ -70,7 +70,7 @@ MAX_SAMPLES = 24          # kept per sign: plenty to compare against, small to s
 
 def sign_features(landmarks: Sequence[Any], aspect: float) -> Optional[tuple[float, ...]]:
     """Shape of one hand, independent of where it is, how big it looks and
-    how it's tilted — plus which way it's pointing, kept separately."""
+    how it's tilted, plus which way it's pointing, kept separately."""
     if len(landmarks) < 21:
         return None
     pts = [(lm.x * aspect, lm.y, getattr(lm, "z", 0.0) * aspect) for lm in landmarks]
@@ -199,7 +199,7 @@ class SignTyper:
 
     A sign types once it has been held steadily for ``hold_seconds`` with at
     least ``min_confidence``. It then won't type again until the hand has
-    changed — a different sign, a relaxed hand, or no hand — for at least
+    changed, a different sign, a relaxed hand, or no hand, for at least
     ``release_seconds``; that's how you spell a double letter ("ll"): sign
     it, relax for a moment, sign it again.
     """

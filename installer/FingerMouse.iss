@@ -1,4 +1,4 @@
-; Finger Mouse — Windows installer (Inno Setup 6.3 or newer).
+; Finger Mouse, Windows installer (Inno Setup 6.3 or newer).
 ;
 ; Build the app first (python -m PyInstaller FingerMouse.spec), then:
 ;

@@ -1,4 +1,4 @@
-# Finger Mouse — runtime and build dependencies, pinned to what CI builds with.
+# Finger Mouse, runtime and build dependencies, pinned to what CI builds with.
 # Python 3.12 (CI) or newer. Install with:  python -m pip install -r requirements.txt
 # then fetch the hand model once:           python tools/fetch_model.py
 

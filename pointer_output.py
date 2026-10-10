@@ -2,7 +2,7 @@
 
 Two layers:
 
-* **Backends** talk to the operating system's own input APIs — SendInput on
+* **Backends** talk to the operating system's own input APIs, SendInput on
   Windows, Quartz events on macOS, and PyAutoGUI/XTest on Linux (X11).
   Native calls matter for dragging: macOS only treats a held button plus
   movement as a drag if the movement arrives as "dragged" events, which a
@@ -325,13 +325,13 @@ class MacBackend(PointerBackend):
 # ---------------------------------------------------------------------------
 
 class PyAutoGUIBackend(PointerBackend):
-    """PyAutoGUI — XTest on Linux. Wayland sessions generally refuse this."""
+    """PyAutoGUI, XTest on Linux. Wayland sessions generally refuse this."""
 
     name = "pyautogui"
 
     def __init__(self) -> None:
         # PyAutoGUI imports MouseInfo, which on Linux calls sys.exit() if
-        # tkinter is missing — and the app bundle has no tkinter. Finger Mouse
+        # tkinter is missing, and the app bundle has no tkinter. Finger Mouse
         # never uses MouseInfo, so a stand-in keeps that import harmless.
         if "mouseinfo" not in sys.modules:
             import types
@@ -553,7 +553,7 @@ class PointerOutput(threading.Thread):
             self._paused_until = now + self.OVERRIDE_PAUSE
             self._last_set = None
             if not was_paused:
-                self.on_event("override", "You moved the mouse — hand control paused for a moment.")
+                self.on_event("override", "You moved the mouse, hand control paused for a moment.")
         if self.paused and not self._button_down:
             return   # the person's own mouse wins; clicks and moves are dropped
         if self._paused_until and not self.paused:
