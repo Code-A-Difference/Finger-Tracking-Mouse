@@ -44,6 +44,7 @@ try:
     import app_settings
     from app_settings import Settings
     from app_version import APP_NAME, APP_VERSION, PUBLISHER, SOURCE_URL
+    import updates
     from camera import CameraCapabilities, CameraInfo, OpenCVCamera, list_cameras, probe_camera_indices, \
         probe_resolutions, validate_stream_url
     from diagnostics import Heartbeat, Watchdog, setup_logging
@@ -1100,6 +1101,8 @@ class SettingsDialog(QDialog):
         self._check(l, "show_diagnostics", "Show diagnostics (frame rates, timings, stalls)")
         self._check(l, "verbose_logging", "Detailed logging",
                     "Writes more detail to the log file. Useful when reporting a problem.")
+        self._check(l, "check_for_updates", "Tell me when a new version is out",
+                    "Checks GitHub once when the app opens. Nothing is downloaded or installed by itself.")
         logs = QPushButton("Open the log folder")
         logs.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.main.log_dir))))
         l.addWidget(logs, 0, Qt.AlignmentFlag.AlignLeft)
@@ -1308,6 +1311,48 @@ class MainWindow(QMainWindow):
         self.tick.start()
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self.stop_tracking)
         self.refresh_cameras()
+        # a few seconds after opening: is there a newer version? (updates.py)
+        self._update_result: Optional[dict] = None
+        if self.settings.check_for_updates and not os.environ.get("FINGERMOUSE_NO_UPDATE_CHECK"):
+            QTimer.singleShot(4000, self._start_update_check)
+
+    # -- updates ----------------------------------------------------------------
+
+    def _start_update_check(self) -> None:
+        def work() -> None:
+            rel = updates.fetch_latest()
+            self._update_result = updates.offer(rel, APP_VERSION, self.settings.skipped_update) if rel else None
+        threading.Thread(target=work, name="update-check", daemon=True).start()
+        self._update_polls = 0
+        self._update_timer = QTimer(self, interval=500)
+        self._update_timer.timeout.connect(self._poll_update_check)
+        self._update_timer.start()
+
+    def _poll_update_check(self) -> None:
+        self._update_polls += 1
+        if self._update_result is None and self._update_polls < 40:   # 20 s, then give up quietly
+            return
+        self._update_timer.stop()
+        if self._update_result and not self._quitting:
+            self._offer_update(self._update_result)
+
+    def _offer_update(self, o: dict) -> None:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Update available")
+        box.setTextFormat(Qt.TextFormat.MarkdownText)
+        box.setText(f"**{APP_NAME} {o['version']} is out** — you have {APP_VERSION}.\n\n"
+                    f"**What's new**\n\n{o['notes']}")
+        download = box.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
+        later = box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        skip = box.addButton("Skip this version", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(download)
+        box.setEscapeButton(later)
+        box.exec()
+        if box.clickedButton() is download:
+            QDesktopServices.openUrl(QUrl(o["url"]))
+        elif box.clickedButton() is skip:
+            self.replace_settings(self.settings.copy(skipped_update=o["version"]))
 
     # -- layout -----------------------------------------------------------------
     def _build(self) -> None:

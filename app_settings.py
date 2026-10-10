@@ -118,6 +118,10 @@ class Settings:
     show_diagnostics: bool = False
     verbose_logging: bool = False
 
+    # ---- updates (updates.py) --------------------------------------------
+    check_for_updates: bool = True   # ask GitHub at start-up whether a newer version is out
+    skipped_update: str = ""         # a version the user chose to skip ("2.8.0")
+
     version: int = SETTINGS_VERSION
 
     # ------------------------------------------------------------------

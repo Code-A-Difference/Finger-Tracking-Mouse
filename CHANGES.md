@@ -1,5 +1,15 @@
 # What changed
 
+## 2.8.0
+
+### Tells you when a new version is out
+- A few seconds after opening, Finger Mouse checks GitHub for a newer
+  release. If there is one, it shows what's new with a **Download** button
+  for your computer's installer, **Later**, and **Skip this version**.
+- Nothing is downloaded or installed by itself, and nothing about your
+  computer is sent. Turn it off in Settings → Advanced → "Tell me when a
+  new version is out".
+
 ## 2.7.0
 
 ### Sign-language typing — a fourth mode
