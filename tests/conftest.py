@@ -1,5 +1,9 @@
+import os
 import sys
 from pathlib import Path
+
+# The app asks GitHub for a newer version at start-up; never during tests.
+os.environ["FINGERMOUSE_NO_UPDATE_CHECK"] = "1"
 
 # Tests import the app's modules straight from the repository root.
 ROOT = Path(__file__).resolve().parent.parent
