@@ -4,7 +4,7 @@
 #   packaging/linux/build_appimage.sh 2.2.0
 #
 # Produces dist/FingerMouse-linux-x86_64.AppImage. Download, mark executable,
-# run — nothing to install, nothing fetched at run time. It needs glibc 2.35
+# run, nothing to install, nothing fetched at run time. It needs glibc 2.35
 # or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later) and an X11 session;
 # see RELEASING.md.
 set -euo pipefail

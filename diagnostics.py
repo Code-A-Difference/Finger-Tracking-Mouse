@@ -1,7 +1,7 @@
 """Lightweight diagnostics: where time goes, and who is stuck when it freezes.
 
-Finger Mouse runs four things at once — camera capture, hand tracking, the
-window, and pointer output — each on its own thread so none can block the
+Finger Mouse runs four things at once, camera capture, hand tracking, the
+window, and pointer output, each on its own thread so none can block the
 others. When something still feels frozen, the question is *which* one. A
 watchdog thread checks each stage's heartbeat four times a second and logs
 a single line naming the stage that stopped ("camera read blocked for

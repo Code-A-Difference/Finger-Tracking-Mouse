@@ -61,7 +61,7 @@ _allow_missing_audio()
 # Starting safely
 # ---------------------------------------------------------------------------
 # MediaPipe's macOS build sets up GPU resources while opening the hand model,
-# even for CPU inference, and if that fails it doesn't raise — it aborts the
+# even for CPU inference, and if that fails it doesn't raise, it aborts the
 # whole process. Real Macs are fine; some virtual machines (GitHub's macOS
 # runners, for one) are not. So on macOS the model is first opened once in a
 # short-lived child process: if that child dies, the app shows why and keeps

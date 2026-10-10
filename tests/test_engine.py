@@ -296,7 +296,7 @@ def test_eye_mode_moves_the_pointer_by_calibrated_gaze_and_clicks_by_dwelling():
     moves = of(calls, "move")
     assert moves, "the pointer never moved"
     # Eye mode maps the calibrated screen fraction straight onto the desktop
-    # (no "reach" margin, unlike hand mode's screen() helper above) — offset
+    # (no "reach" margin, unlike hand mode's screen() helper above), offset
     # (0, 0) is calibrated to screen fraction (0.5, 0.5), i.e. the centre of
     # the 1000x800 test desktop.
     ex, ey = 0.5 * 999, 0.5 * 799

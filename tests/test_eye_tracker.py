@@ -36,7 +36,7 @@ def test_eye_tracker_runs_real_inference_and_finds_no_face_in_a_blank_frame():
 
 @pytest.mark.skipif(not (ROOT / "models" / "face_landmarker.task").exists(), reason="model not downloaded")
 def test_eye_tracker_shares_the_hand_models_macos_probe():
-    # eye_tracker deliberately has no probe machinery of its own — it reuses
+    # eye_tracker deliberately has no probe machinery of its own, it reuses
     # hand_tracker.start_check(), since the crash it guards against is in
     # MediaPipe's native library, not any one model.
     import hand_tracker

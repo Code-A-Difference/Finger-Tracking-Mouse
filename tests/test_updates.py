@@ -1,4 +1,4 @@
-"""The update check's decisions (updates.py) — no network, no Qt."""
+"""The update check's decisions (updates.py), no network, no Qt."""
 import updates
 
 ASSETS = [

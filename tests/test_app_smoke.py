@@ -1,7 +1,7 @@
 """The real app, end to end, with no webcam and no real mouse.
 
-The camera is an MJPEG stream served locally — the same kind of stream a
-phone camera app publishes — showing a real photo of a pointing hand. Hand
+The camera is an MJPEG stream served locally, the same kind of stream a
+phone camera app publishes, showing a real photo of a pointing hand. Hand
 tracking is the real MediaPipe model. Only the operating-system mouse is
 swapped for a recorder, so nothing on the test machine moves. The window
 runs offscreen.

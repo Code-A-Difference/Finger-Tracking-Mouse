@@ -1,8 +1,8 @@
 """Head-pointer geometry for Finger Mouse: where the nose is, and what the
 eyes, mouth and cheeks are doing.
 
-Input is the same as eye_pose.py — MediaPipe's face landmarks (x, y as
-fractions of the frame) and its face blendshapes — so the head pointer runs
+Input is the same as eye_pose.py, MediaPipe's face landmarks (x, y as
+fractions of the frame) and its face blendshapes, so the head pointer runs
 on the same face model as eye tracking. Nothing here touches MediaPipe or a
 camera, so it is tested with plain landmark data.
 
@@ -38,7 +38,7 @@ class HeadMeasure:
     """One frame of the face, for the head pointer."""
     nose: tuple[float, float]   # nose tip, in face widths from the frame's top-left corner
     scale: float                # face width (eye centre to eye centre), in frame-height units
-    wink_left: float            # 0 (open) .. 1 (closed) — the eye on YOUR left
+    wink_left: float            # 0 (open) .. 1 (closed), the eye on YOUR left
     wink_right: float           # the eye on your right
     mouth_open: float           # 0 .. 1
     smile: float                # 0 .. 1

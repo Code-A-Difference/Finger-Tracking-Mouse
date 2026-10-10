@@ -1,7 +1,7 @@
 """Thread subclasses must not reuse threading.Thread's private names.
 
 Python 3.12's Thread.join() calls self._stop(); a subclass that stores a
-flag called _stop breaks join() there (and only there — 3.13 renamed it),
+flag called _stop breaks join() there (and only there, 3.13 renamed it),
 which is how every thread in the app once failed on 3.12 but not 3.14.
 """
 

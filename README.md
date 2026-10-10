@@ -11,15 +11,15 @@ and it doesn't need the internet.
 
 **[codeadifference.ct.ws/projects/finger-tracking-mouse](https://codeadifference.ct.ws/projects/finger-tracking-mouse/)**
 or the [GitHub download page](https://code-a-difference.github.io/Finger-Tracking-Mouse/)
-— both suggest the right file for your computer and link straight to the
+- both suggest the right file for your computer and link straight to the
 latest [release](https://github.com/Code-A-Difference/Finger-Tracking-Mouse/releases/latest):
 
 | System | File |
 |---|---|
-| Windows 10/11, 64-bit | `FingerMouse-windows-x64-setup.exe` — installer, no administrator rights needed |
-| macOS 13+, Apple silicon | `FingerMouse-macos-arm64.dmg` — drag to Applications |
-| macOS 13+, Intel | `FingerMouse-macos-x64.dmg` — drag to Applications |
-| Linux x86-64 (glibc 2.35+, X11) | `FingerMouse-linux-x86_64.AppImage` — `chmod +x`, then run |
+| Windows 10/11, 64-bit | `FingerMouse-windows-x64-setup.exe`, installer, no administrator rights needed |
+| macOS 13+, Apple silicon | `FingerMouse-macos-arm64.dmg`, drag to Applications |
+| macOS 13+, Intel | `FingerMouse-macos-x64.dmg`, drag to Applications |
+| Linux x86-64 (glibc 2.35+, X11) | `FingerMouse-linux-x86_64.AppImage`, `chmod +x`, then run |
 
 Once installed, Finger Mouse runs entirely offline.
 
@@ -30,7 +30,7 @@ Once installed, Finger Mouse runs entirely offline.
 | Point with your index finger | move the pointer |
 | Quick pinch (thumb + index), then open | left-click **where the pinch began** |
 | Pinch and hold (0.42 s by default), move, open | press, drag, drop |
-| Index and middle fingers up, move up or down | scroll — further from where you started is faster |
+| Index and middle fingers up, move up or down | scroll, further from where you started is faster |
 | Move your real mouse | pause hand control for a moment |
 | Esc, or **Stop tracking** | stop |
 
@@ -56,8 +56,8 @@ dead zone, a speed cap and a gentle start.
 A third way to steer, for anyone who can move their head more easily than a
 hand: **Settings → Pointer → Tracking mode → Head pointer**. No calibration.
 
-- **Your nose steers.** It's the steadiest point on a face — talking or
-  smiling doesn't move it — and it's measured in face widths, so sitting
+- **Your nose steers.** It's the steadiest point on a face, talking or
+  smiling doesn't move it, and it's measured in face widths, so sitting
   closer to or further from the camera doesn't change the speed. *Like a
   mouse* (the default) moves the pointer by how far and how fast you move,
   so careful movements are precise and a flick crosses the screen; *Point at
@@ -97,7 +97,7 @@ carefully, and raise **Certainty** if they get mixed up.
 
 An alternative to hand gestures: Settings → Pointer → Tracking mode → **Eye
 gaze**. It follows where your iris sits within your own eye socket, which
-moves with your eyeball and barely with your head — turning your head
+moves with your eyeball and barely with your head, turning your head
 without moving your eyes hardly changes it, which is what lets a short
 calibration turn it into an accurate screen position.
 
@@ -105,7 +105,7 @@ calibration turn it into an accurate screen position.
    tracking → **Calibrate…** and look at each of the nine dots as it
    appears.
 2. **Click by holding your gaze still** (the default), by a **deliberate
-   blink**, or either — an ordinary quick blink doesn't count, only one held
+   blink**, or either, an ordinary quick blink doesn't count, only one held
    past a threshold. Dwelling tolerates a little drift rather than demanding
    a frozen stare, and won't click twice in a row without looking away first.
 
@@ -233,6 +233,6 @@ notarization), and the release workflow. What changed in each version is in
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Bundled libraries (Qt, MediaPipe, OpenCV and
+MIT, see [LICENSE](LICENSE). Bundled libraries (Qt, MediaPipe, OpenCV and
 others) keep their own licenses. The hand model is Google's MediaPipe hand
 landmarker (Apache 2.0).

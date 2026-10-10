@@ -203,10 +203,10 @@ class CalibrationDialog(QDialog):
     """Teach the eye tracker where you're looking.
 
     Thorough (the default, about 70 seconds):
-      1. a 5x5 grid of points, edge to edge — each a ring that closes onto a
+      1. a 5x5 grid of points, edge to edge, each a ring that closes onto a
          4-pixel centre, sampled once it has (blinks dropped, median kept);
       2. a dot that glides around the screen for 20 seconds while you follow
-         it — hundreds of samples, at every place in between the grid points;
+         it, hundreds of samples, at every place in between the grid points;
       3. five check points it hasn't trained on: the error there is what's
          reported, so the number is honest, and they're then added in too.
     Quick: thirteen points, no moving dot, no check (the report is then the
@@ -217,7 +217,7 @@ class CalibrationDialog(QDialog):
 
     Needs eye tracking running (MainWindow checks before opening this): it
     reads the engine's last gaze values on a timer, the same way the main
-    window reads ``engine.view`` — nothing here touches the tracking thread.
+    window reads ``engine.view``, nothing here touches the tracking thread.
     """
 
     GRID = [(x, y) for y in (0.04, 0.27, 0.5, 0.73, 0.96) for x in (0.04, 0.27, 0.5, 0.73, 0.96)]
@@ -279,10 +279,10 @@ class CalibrationDialog(QDialog):
         else:
             self.hint.move(width // 8, height // 2 - 45)
             self.hint.setText(
-                ("Thorough calibration — about a minute. Sit as you normally will, face the screen, and keep "
+                ("Thorough calibration, about a minute. Sit as you normally will, face the screen, and keep "
                  "your head still. Look at the centre of each ring until it moves on, then follow the moving "
                  "dot with your eyes. " if thorough else
-                 "Quick calibration — 13 points. Keep your head still and look at the centre of each ring. ")
+                 "Quick calibration, 13 points. Keep your head still and look at the centre of each ring. ")
                 + "Press Space to start. Esc cancels.")
 
     def keyPressEvent(self, event: Any) -> None:  # noqa: N802 (Qt name)
@@ -322,7 +322,7 @@ class CalibrationDialog(QDialog):
             self.target.set_progress(1)
             self.target.show()
             self._place_hint(0.5)
-            self.hint.setText("Now follow the moving dot with your eyes — just your eyes, head still.")
+            self.hint.setText("Now follow the moving dot with your eyes, just your eyes, head still.")
             self._phase_start = time.monotonic()
             self._tick.start()
         else:
@@ -341,7 +341,7 @@ class CalibrationDialog(QDialog):
         self._place_hint(fy)
         label = {"fix": "Calibrating", "check": "Checking"}[kind] if not self.recentre else "Re-centring"
         again = " Keep your eyes open and on the centre." if self._retried else ""
-        self.hint.setText(f"{label}: look at the centre of the ring — {self._index + 1} of {len(points)}. "
+        self.hint.setText(f"{label}: look at the centre of the ring, {self._index + 1} of {len(points)}. "
                           f"Esc cancels.{again}")
         self._readings = []
         self._phase_start = time.monotonic()
@@ -467,7 +467,7 @@ class TeachSignsDialog(QDialog):
 
     For each sign: the letter and how it's made are shown, there's a moment
     to get your hand into shape, then two seconds of your hand are recorded
-    (move it a little — slightly different angles and distances make the
+    (move it a little, slightly different angles and distances make the
     recognition sturdier). A sign that couldn't be seen clearly is tried again.
     While this window is open, signs are recognised (shown live under "I see")
     but never typed.
@@ -531,7 +531,7 @@ class TeachSignsDialog(QDialog):
         self.bar.setRange(0, 100)
         self.bar.setTextVisible(False)
         right.addWidget(self.bar)
-        self.seeing = QLabel("I see: —")
+        self.seeing = QLabel("I see:, ")
         self.seeing.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.seeing.setStyleSheet("font-size: 15px; color: #34d399;")
         right.addWidget(self.seeing)
@@ -623,7 +623,7 @@ class TeachSignsDialog(QDialog):
             self.bar.setValue(0)
             taught = len(self.book.taught)
             self.status.setText(f"{taught} of {len(sign_language.SIGNS)} signs taught. Close this window and sign "
-                                "into any app — hold each letter steady for a moment to type it.")
+                                "into any app, hold each letter steady for a moment to type it.")
             self._show_sign(self._selected())
             return
         self.current = self.queue.pop(0)
@@ -634,7 +634,7 @@ class TeachSignsDialog(QDialog):
         self._show_sign(self.current)
         self._phase, self._phase_start = "ready", time.monotonic()
         self.samples = []
-        self.status.setText("Get ready — make this sign with your signing hand.")
+        self.status.setText("Get ready, make this sign with your signing hand.")
 
     def _step(self) -> None:
         engine = self.main.engine
@@ -651,7 +651,7 @@ class TeachSignsDialog(QDialog):
             self.bar.setValue(int(100 * elapsed / self.READY_MS))
             if elapsed >= self.READY_MS:
                 self._phase, self._phase_start = "capture", time.monotonic()
-                self.status.setText("Hold it… move your hand a little — closer, further, a slight turn.")
+                self.status.setText("Hold it… move your hand a little, closer, further, a slight turn.")
                 self._last_seq = engine.sign_frame_seq if engine else -1
             return
         # capture
@@ -663,7 +663,7 @@ class TeachSignsDialog(QDialog):
             if len(self.samples) < self.MIN_FRAMES:
                 if not self._retried:
                     self._retried = True
-                    self.status.setText("Couldn't see your hand clearly — once more. Keep it inside the camera view.")
+                    self.status.setText("Couldn't see your hand clearly, once more. Keep it inside the camera view.")
                     self._phase, self._phase_start = "ready", time.monotonic()
                     self.samples = []
                     return
@@ -828,7 +828,7 @@ class SettingsDialog(QDialog):
         self._slider(l, "halo_size", "Tracking halo size", 16, 80, "{} px")
         self._check(l, "show_halo", "Show the halo around the pointer")
         self._check(l, "pause_on_physical_mouse", "Pause hand control while I use my mouse or trackpad",
-                    "When you move your real mouse, hand control steps aside for a moment — "
+                    "When you move your real mouse, hand control steps aside for a moment, "
                     "also a quick way to reach the Stop button.")
         sys_cursor = QPushButton("System pointer size…")
         sys_cursor.clicked.connect(self.main.open_system_cursor_settings)
@@ -839,7 +839,7 @@ class SettingsDialog(QDialog):
     def _click_tab(self) -> QWidget:
         page, l = self._page()
         self._hint(l, "<b>Quick pinch</b> (thumb and index): left-click where the pinch began. "
-                      "<b>Pinch and hold</b>: press and hold the button — move to drag, open your fingers "
+                      "<b>Pinch and hold</b>: press and hold the button, move to drag, open your fingers "
                       "to drop. The pointer stays still while a click is being decided.")
         self._check(l, "click_enabled", "Pinch to click")
         self._slider(l, "pinch_threshold", "Pinch closes at", 10, 60, "{}% of hand size",
@@ -872,7 +872,7 @@ class SettingsDialog(QDialog):
 
     def _head_tab(self) -> QWidget:
         page, l = self._page()
-        self._hint(l, "Steer with your nose — the steadiest point on a face, so talking or smiling doesn't move "
+        self._hint(l, "Steer with your nose, the steadiest point on a face, so talking or smiling doesn't move "
                       "the pointer. Wink to click. No calibration needed: pick Head pointer under Pointer → "
                       "Tracking mode and press Start.")
         self._choice(l, "head_pointer_mode", "Movement",
@@ -888,7 +888,7 @@ class SettingsDialog(QDialog):
         self._slider(l, "head_dead_zone", "Steadiness", 0, 100, "{}%",
                      "Head movement slower than this is ignored, so tremor or breathing doesn't drift the pointer.")
         self._slider(l, "head_smoothing", "Smoothing", 0, 100, "{}%")
-        self._check(l, "snap_enabled", "Snap — hold the pointer still once it settles",
+        self._check(l, "snap_enabled", "Snap, hold the pointer still once it settles",
                     "Once the pointer has stayed in one spot for a moment it locks there, perfectly still, "
                     "and only lets go when you clearly move away. Makes small buttons much easier to hit.")
         self._slider(l, "snap_strength", "Snap strength", 1, 10, "{}% of the screen",
@@ -910,7 +910,7 @@ class SettingsDialog(QDialog):
                     "Only if your camera shows an un-mirrored picture and winks come out the wrong way round.")
         self._choice(l, "head_mouth_action", "Open your mouth to",
                      [("drag", "Drag"), ("scroll", "Scroll"), ("click", "Click"), ("off", "Nothing")],
-                     "Drag holds the button down while your mouth is open. Scroll: open your mouth, then nod down or up — the further, the faster.")
+                     "Drag holds the button down while your mouth is open. Scroll: open your mouth, then nod down or up, the further, the faster.")
         self._choice(l, "head_smile_action", "A held smile",
                      [("off", "Nothing"), ("pause", "Pause / resume"), ("double_click", "Double-click"),
                       ("right_click", "Right-click")],
@@ -921,7 +921,7 @@ class SettingsDialog(QDialog):
     def _sign_tab(self) -> QWidget:
         page, l = self._page()
         self._hint(l, "Type by fingerspelling (the ASL alphabet) into whatever app has the keyboard. First show "
-                      "Finger Mouse your own signs — about two seconds each — so it recognises <i>your</i> hand. "
+                      "Finger Mouse your own signs, about two seconds each, so it recognises <i>your</i> hand. "
                       "Then hold each letter steady for a moment to type it; relax your hand for a moment between "
                       "double letters. You also teach a sign for space and one for delete.")
         self.sign_status = QLabel()
@@ -947,7 +947,7 @@ class SettingsDialog(QDialog):
         missing = [x for x in sign_language.LETTERS if x not in book.samples]
         text = f"{n} of {len(sign_language.SIGNS)} signs taught"
         if n and missing:
-            text += f" — not yet: {', '.join(missing[:8])}{'…' if len(missing) > 8 else ''}"
+            text += f", not yet: {', '.join(missing[:8])}{'…' if len(missing) > 8 else ''}"
         for extra, name in ((sign_language.SPACE, "space"), (sign_language.DELETE, "delete")):
             if n and extra not in book.samples:
                 text += f"; no {name} sign yet"
@@ -960,7 +960,7 @@ class SettingsDialog(QDialog):
         page, l = self._page()
         self._hint(l, "Look at the screen to move the pointer instead of using your hand. Needs a short "
                       "calibration first, and is happiest when your head stays roughly still and facing "
-                      "the camera — a head turn can throw it off more than a hand-tracking wobble would.")
+                      "the camera, a head turn can throw it off more than a hand-tracking wobble would.")
         self._choice(l, "eye_click_mode", "Click by",
                      [("dwell", "Holding your gaze still (recommended)"),
                       ("blink", "A deliberate blink"),
@@ -973,7 +973,7 @@ class SettingsDialog(QDialog):
                      hint="How long an eye must stay shut to count as a deliberate blink, not an ordinary one.")
         self._slider(l, "eye_smoothing", "Smoothing", 0, 100, "{}%",
                      hint="Gaze tracking is noisier than hand tracking, so this usually wants to sit higher.")
-        self._check(l, "snap_enabled", "Snap — hold the pointer still once it settles",
+        self._check(l, "snap_enabled", "Snap, hold the pointer still once it settles",
                     "Once the pointer has stayed in one spot for a moment it locks there, perfectly still, "
                     "and only lets go when you clearly move away. Makes small buttons much easier to hit.")
         self._slider(l, "snap_strength", "Snap strength", 1, 10, "{}% of the screen",
@@ -984,8 +984,8 @@ class SettingsDialog(QDialog):
         self.calibration_status.setObjectName("value")
         l.addWidget(self.calibration_status)
         self._choice(l, "eye_calibration_detail", "Calibration",
-                     [("thorough", "Thorough — 25 points, a moving dot and a check (about 70 s, recommended)"),
-                      ("quick", "Quick — 13 points (about 25 s)")])
+                     [("thorough", "Thorough, 25 points, a moving dot and a check (about 70 s, recommended)"),
+                      ("quick", "Quick, 13 points (about 25 s)")])
         row = QHBoxLayout()
         self.calibrate_button = QPushButton("Calibrate…")
         self.calibrate_button.clicked.connect(self.main.open_calibration)
@@ -1029,7 +1029,7 @@ class SettingsDialog(QDialog):
         self.stream_error.setObjectName("error")
         sl.addWidget(self.stream_error)
         self._hint(sl, "Experimental. Phone apps such as “IP Webcam” show an address like this while "
-                       "they run. Use it on a network you trust — plain http video isn't encrypted.")
+                       "they run. Use it on a network you trust, plain http video isn't encrypted.")
         l.addWidget(self.stream_row)
 
         self._hint(l, "<b>Using a phone as the camera:</b> apps such as DroidCam or Iriun, and iPhone "
@@ -1080,7 +1080,7 @@ class SettingsDialog(QDialog):
         page, l = self._page()
         self._hint(l, "An optional shortcut: hold up only your middle finger for a moment to stop tracking "
                       "and put Finger Mouse away. It's off unless you turn it on. It only affects Finger "
-                      "Mouse — it never closes or touches any other app.")
+                      "Mouse, it never closes or touches any other app.")
         box = QCheckBox("Enable the hide gesture")
         box.toggled.connect(self._hide_toggled)
         self.controls["hide_gesture_enabled"] = box
@@ -1341,7 +1341,7 @@ class MainWindow(QMainWindow):
         box.setIcon(QMessageBox.Icon.Information)
         box.setWindowTitle("Update available")
         box.setTextFormat(Qt.TextFormat.MarkdownText)
-        box.setText(f"**{APP_NAME} {o['version']} is out** — you have {APP_VERSION}.\n\n"
+        box.setText(f"**{APP_NAME} {o['version']} is out**, you have {APP_VERSION}.\n\n"
                     f"**What's new**\n\n{o['notes']}")
         download = box.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
         later = box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
@@ -1427,7 +1427,7 @@ class MainWindow(QMainWindow):
     def _update_subtitle(self) -> None:
         if self.settings.tracking_mode == "eye":
             self.subtitle.setText("Look at the screen to move the pointer. Hold your gaze still (or blink) "
-                                  "to click — calibrate first in Settings → Eye tracking.")
+                                  "to click, calibrate first in Settings → Eye tracking.")
         elif self.settings.tracking_mode == "sign":
             self.subtitle.setText("Fingerspell to type into any app: hold each letter steady for a moment. "
                                   "Teach your signs first in Settings → Sign language.")
@@ -1561,7 +1561,7 @@ class MainWindow(QMainWindow):
             else:
                 screen = QGuiApplication.primaryScreen().size()
                 px = int(err * (screen.width() ** 2 + screen.height() ** 2) ** 0.5 / 1.414)
-                quality = ("Great" if err < 0.035 else "Good" if err < 0.06 else "Rough — calibrating again in "
+                quality = ("Great" if err < 0.035 else "Good" if err < 0.06 else "Rough, calibrating again in "
                            "even light, with your head still, usually helps")
                 where = "on check points it didn't train on" if dialog.accuracy_is_held_out else "on the calibration points"
                 note = f"Average error {where}: about {err * 100:.1f}% of the screen (~{px} px). {quality}."
@@ -1590,7 +1590,7 @@ class MainWindow(QMainWindow):
         if not self._eye_ready():
             return
         if not GazeCalibration.from_json(self.settings.eye_calibration).is_calibrated:
-            QMessageBox.information(self, "Calibrate first", "Re-centring adjusts a calibration — calibrate first.")
+            QMessageBox.information(self, "Calibrate first", "Re-centring adjusts a calibration, calibrate first.")
             return
         if CalibrationDialog(self, recentre=True).exec() == QDialog.DialogCode.Accepted and self.settings_dialog:
             self.settings_dialog.load(self.settings)

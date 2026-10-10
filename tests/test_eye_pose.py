@@ -14,7 +14,7 @@ class L:
 
 def landmarks(right_iris=(0.35, 0.5), left_iris=(0.65, 0.5)):
     """478 landmarks, mostly at the origin, with the eight eye-socket points
-    and both iris centres placed for a face looking at (0.5, 0.5) — outer
+    and both iris centres placed for a face looking at (0.5, 0.5), outer
     corners at the frame edges, inner corners toward the nose, eyes centred
     vertically around y=0.5."""
     pts = [L(0.0, 0.0)] * 479
@@ -39,7 +39,7 @@ def test_iris_centred_in_the_socket_is_a_zero_offset():
 
 
 def test_iris_toward_the_inner_corner_reads_positive_x():
-    # Right eye: outer 0.2, inner 0.45 — iris near the inner corner is +1;
+    # Right eye: outer 0.2, inner 0.45, iris near the inner corner is +1;
     # the left eye's iris stays centred (0), so the average is roughly half that.
     m = eye_pose.measure(landmarks(right_iris=(0.44, 0.5), left_iris=(0.675, 0.5)), {}, 1.0)
     assert m is not None

@@ -3,7 +3,7 @@
 Same shape as hand_tracker.py, and deliberately reuses its macOS probe: the
 crash that probe guards against (MediaPipe aborting instead of raising when
 a GPU delegate can't be created, e.g. some macOS VMs) happens in MediaPipe's
-native library itself, not in which model is loaded — if a HandTracker can
+native library itself, not in which model is loaded, if a HandTracker can
 open there, a FaceLandmarker can too, so there's no need for a second
 subprocess check.
 

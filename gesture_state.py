@@ -1,28 +1,28 @@
-"""Gesture state machines for Finger Mouse — plain Python, no camera, no Qt.
+"""Gesture state machines for Finger Mouse, plain Python, no camera, no Qt.
 
 Everything that decides what a hand *means* lives here so it can be tested
 frame by frame without a webcam:
 
-* ``PointerFilter``     — One Euro smoothing for the pointer, with extra
+* ``PointerFilter``, One Euro smoothing for the pointer, with extra
                           damping while a pinch is closing so the pinch
                           motion itself doesn't drag the pointer.
-* ``PinchGesture``      — quick pinch = click, pinch and hold = press and
+* ``PinchGesture``, quick pinch = click, pinch and hold = press and
                           drag, release = let go; the click point is locked
                           the instant the pinch crosses its threshold.
-* ``PointerStabilizer`` — holds the pointer still while a click is being
+* ``PointerStabilizer``, holds the pointer still while a click is being
                           decided, and makes drags start exactly on the
                           locked point without a jump.
-* ``ScrollGesture``     — a separate pose that scrolls like a joystick,
+* ``ScrollGesture``, a separate pose that scrolls like a joystick,
                           with a dead zone, easing and a speed cap.
-* ``HeldPose``          — "this pose, held steadily for N seconds", used by
+* ``HeldPose``, "this pose, held steadily for N seconds", used by
                           the optional hide gesture.
-* ``GazeCalibration``   — fits a raw gaze offset (eye_pose.py) to screen
+* ``GazeCalibration``, fits a raw gaze offset (eye_pose.py) to screen
                           coordinates from a short look-at-these-dots
                           calibration, and applies it afterwards.
-* ``steady_reading``    — one calibration dot's frames -> one robust reading.
-* ``HeadPointer``, ``WinkClick``, ``FaceSwitch`` — the head pointer: the
+* ``steady_reading``, one calibration dot's frames -> one robust reading.
+* ``HeadPointer``, ``WinkClick``, ``FaceSwitch``, the head pointer: the
                           nose steers, winks click, mouth/smile are switches.
-* ``DwellClick``        — eye-tracking's click: hold the (calibrated, smoothed)
+* ``DwellClick``, eye-tracking's click: hold the (calibrated, smoothed)
                           gaze still over one spot for a moment.
 
 The tracking thread feeds these measurements and passes the returned
@@ -148,7 +148,7 @@ class PinchGesture:
           └──────────── hand lost past the grace period (from any state)
 
     * The click point is locked on the **first frame** the pinch ratio
-      crosses the threshold — the exact moment, not after debouncing — and
+      crosses the threshold, the exact moment, not after debouncing, and
       every click, press and drag start uses it.
     * ``confirm_frames`` must agree before a pinch or a release counts, and
       releasing needs the fingers to open past a wider threshold
@@ -551,8 +551,8 @@ class GazeCalibration:
        the averaged offset's polynomial, the difference between the two eyes,
        how open the eyes are (the lid follows the eyeball up and down, which
        the iris barely does inside its socket), and head turn and nod with
-       how they interact with gaze. Fit to hundreds of samples — a grid of
-       fixations plus a followed moving dot — by weighted ridge regression,
+       how they interact with gaze. Fit to hundreds of samples, a grid of
+       fixations plus a followed moving dot, by weighted ridge regression,
        with the amount of ridge chosen by cross-validation so it fits what
        generalises, not the noise.
 
@@ -722,7 +722,7 @@ class GazeCalibration:
         return px, py
 
     def apply(self, x: Sequence[float], head: Optional[tuple[float, float]] = None) -> Optional[tuple[float, float]]:
-        """The screen position (clamped 0–1) for ``gaze_features(...)`` — or,
+        """The screen position (clamped 0–1) for ``gaze_features(...)``, or,
         for older callers, a bare offset and head. None before calibration."""
         if not self.is_calibrated:
             return None
@@ -885,7 +885,7 @@ class HeadPointer:
     far the nose moved since the last frame, more for a quick movement than a
     slow one (pointer acceleration), so small careful movements are precise
     and a flick crosses the screen. Turning your head back doesn't bring the
-    pointer back with it — exactly like lifting and moving a mouse.
+    pointer back with it, exactly like lifting and moving a mouse.
 
     ``absolute`` maps the nose position directly: straight ahead is the
     centre of the screen and turning ``reach`` face widths takes you to an
@@ -929,7 +929,7 @@ class HeadPointer:
         starting) holds the pointer and forgets the movement meanwhile, so
         letting go doesn't make it jump."""
         if frozen:
-            # Forget the movement entirely — the smoothing filter's lag too —
+            # Forget the movement entirely, the smoothing filter's lag too
             # so the pointer picks up from wherever the head settles.
             self.filter.reset()
             self._last = self._last_t = None
@@ -1039,11 +1039,11 @@ class SnapLock:
     """Snap: hold the pointer perfectly still once it settles, and let it go
     only on a deliberate move.
 
-    Eye and head tracking are never perfectly steady — even smoothed, the
+    Eye and head tracking are never perfectly steady, even smoothed, the
     pointer shivers around where you're looking, which makes small targets
     hard to hit. With snap on, once the pointer has stayed within ``radius``
     for ``settle_seconds`` it locks to the middle of where it has been, and
-    stays locked — not a pixel of movement — until it is pulled more than
+    stays locked, not a pixel of movement, until it is pulled more than
     ``radius`` away; then it follows freely again until it settles somewhere
     new. Positions are screen fractions (0–1).
     """
