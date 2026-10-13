@@ -1,12 +1,11 @@
 """The one place the app's name, version and publisher are written down.
-
 The PyInstaller spec, the Windows version resource, the macOS Info.plist and
 the About text all read from here; CI passes the same version to the
-installer builders. Bump APP_VERSION, tag ``v<APP_VERSION>``, push the tag.
+installer builders. Bump APP_VERSION and tag v<APP_VERSION> to publish.
 """
 
 APP_NAME = "Finger Mouse"
-APP_VERSION = "2.8.0"
+APP_VERSION = "2.8.1"
 APP_ID = "app.fingermouse.desktop"          # macOS bundle id / Linux app id
 PUBLISHER = "Code-A-Difference"
 PUBLISHER_URL = "https://codeadifference.ct.ws/projects/finger-tracking-mouse/"
