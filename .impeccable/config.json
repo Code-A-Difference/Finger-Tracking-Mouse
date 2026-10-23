@@ -1,0 +1,35 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/assigned.html"
+        ],
+        "createdAt": "2026-10-23T07:36:33.143Z",
+        "reason": "Claude: rejected decision-round sketch, gitignored, never shipped"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-10-23T07:36:33.599Z",
+        "reason": "Claude: rejected decision-round sketch, gitignored, never shipped"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/challenger-transit.html"
+        ],
+        "createdAt": "2026-10-23T07:36:34.045Z",
+        "reason": "Claude: rejected decision-round sketch, gitignored, never shipped"
+      }
+    ]
+  }
+}
