@@ -1,0 +1,993 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-23T07:34:31+00:00",
+  "title": "Design System: Finger Mouse",
+  "extensions": {
+    "colorMeta": {
+      "ground": {
+        "role": "neutral",
+        "displayName": "Mica Ground",
+        "canonical": "#f3f3f3",
+        "oklch": "oklch(96.4% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Card White",
+        "canonical": "#ffffff",
+        "oklch": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "surface-raised": {
+        "role": "neutral",
+        "displayName": "Raised Wash",
+        "canonical": "#f9f9f9",
+        "oklch": "oklch(98.2% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "stroke": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e1e1e1",
+        "oklch": "oklch(91.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "stroke-strong": {
+        "role": "neutral",
+        "displayName": "Firm Line",
+        "canonical": "#c9c9c9",
+        "oklch": "oklch(83.6% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#1b1b1b",
+        "oklch": "oklch(22.2% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "text-secondary": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "canonical": "#5c5c5c",
+        "oklch": "oklch(47.5% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "System Blue",
+        "canonical": "#005fb8",
+        "oklch": "oklch(49.1% 0.160 254.6)",
+        "tonalRamp": [
+          "#000531",
+          "#002259",
+          "#004083",
+          "#1861b0",
+          "#3483de",
+          "#63a8fc",
+          "#8fcdff",
+          "#bcf3ff"
+        ],
+        "mode": "light"
+      },
+      "accent-hover": {
+        "role": "primary",
+        "displayName": "System Blue Hover",
+        "canonical": "#1a6fc4",
+        "oklch": "oklch(54.0% 0.153 253.1)",
+        "tonalRamp": [
+          "#00062f",
+          "#002356",
+          "#004180",
+          "#1762ad",
+          "#3484da",
+          "#63a8f8",
+          "#90cdff",
+          "#bdf3ff"
+        ],
+        "mode": "light"
+      },
+      "on-accent": {
+        "role": "neutral",
+        "displayName": "On Blue",
+        "canonical": "#ffffff",
+        "oklch": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "select": {
+        "role": "neutral",
+        "displayName": "Selection Grey",
+        "canonical": "#e9e9e9",
+        "oklch": "oklch(93.4% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "focus": {
+        "role": "neutral",
+        "displayName": "Focus Ink",
+        "canonical": "#1b1b1b",
+        "oklch": "oklch(22.2% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "ok": {
+        "role": "status",
+        "displayName": "Working Green",
+        "canonical": "#0f7b0f",
+        "oklch": "oklch(50.7% 0.165 142.7)",
+        "tonalRamp": [
+          "#001300",
+          "#003100",
+          "#005200",
+          "#1c751b",
+          "#3a9a36",
+          "#69bc64",
+          "#96df90",
+          "#c2ffbd"
+        ],
+        "mode": "light"
+      },
+      "ok-bg": {
+        "role": "status",
+        "displayName": "Working Green Wash",
+        "canonical": "#dff6dd",
+        "oklch": "oklch(95.0% 0.041 143.0)",
+        "tonalRamp": [
+          "#050e05",
+          "#1d291c",
+          "#384737",
+          "#556754",
+          "#748973",
+          "#98ab97",
+          "#bdcfbc",
+          "#e4f4e3"
+        ],
+        "mode": "light"
+      },
+      "warn": {
+        "role": "status",
+        "displayName": "Needs-a-Look Amber",
+        "canonical": "#8a5300",
+        "oklch": "oklch(49.4% 0.109 66.9)",
+        "tonalRamp": [
+          "#1c0300",
+          "#3d1b00",
+          "#603700",
+          "#865516",
+          "#ad7432",
+          "#ce9960",
+          "#f0bf8d",
+          "#ffe6b9"
+        ],
+        "mode": "light"
+      },
+      "warn-bg": {
+        "role": "status",
+        "displayName": "Needs-a-Look Amber Wash",
+        "canonical": "#fff4ce",
+        "oklch": "oklch(96.6% 0.051 93.7)",
+        "tonalRamp": [
+          "#0f0b00",
+          "#2b2510",
+          "#494229",
+          "#6a6143",
+          "#8c8260",
+          "#aea585",
+          "#d2c9ac",
+          "#f6efd5"
+        ],
+        "mode": "light"
+      },
+      "bad": {
+        "role": "status",
+        "displayName": "Problem Red",
+        "canonical": "#c42b1c",
+        "oklch": "oklch(53.6% 0.191 30.1)",
+        "tonalRamp": [
+          "#2c0000",
+          "#550000",
+          "#800400",
+          "#ae281a",
+          "#dd4635",
+          "#fd7562",
+          "#ffa18d",
+          "#ffcdba"
+        ],
+        "mode": "light"
+      },
+      "bad-bg": {
+        "role": "status",
+        "displayName": "Problem Red Wash",
+        "canonical": "#fde7e9",
+        "oklch": "oklch(94.6% 0.024 11.3)",
+        "tonalRamp": [
+          "#11090a",
+          "#2d2223",
+          "#4c3e3f",
+          "#6d5c5e",
+          "#907d7f",
+          "#b2a0a1",
+          "#d5c4c6",
+          "#f9eaec"
+        ],
+        "mode": "light"
+      },
+      "idle": {
+        "role": "status",
+        "displayName": "Resting Grey",
+        "canonical": "#5c5c5c",
+        "oklch": "oklch(47.5% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "idle-bg": {
+        "role": "status",
+        "displayName": "Resting Grey Wash",
+        "canonical": "#ebebeb",
+        "oklch": "oklch(94.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "preview": {
+        "role": "neutral",
+        "displayName": "Camera Black",
+        "canonical": "#1b1b1b",
+        "oklch": "oklch(22.2% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "preview-text": {
+        "role": "neutral",
+        "displayName": "Camera Caption",
+        "canonical": "#d6d6d6",
+        "oklch": "oklch(87.6% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "light"
+      },
+      "dark-ground": {
+        "role": "neutral",
+        "displayName": "Mica Ground (dark)",
+        "canonical": "#202020",
+        "oklch": "oklch(24.4% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-surface": {
+        "role": "neutral",
+        "displayName": "Card White (dark)",
+        "canonical": "#2b2b2b",
+        "oklch": "oklch(28.9% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-surface-raised": {
+        "role": "neutral",
+        "displayName": "Raised Wash (dark)",
+        "canonical": "#323232",
+        "oklch": "oklch(31.7% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-stroke": {
+        "role": "neutral",
+        "displayName": "Hairline (dark)",
+        "canonical": "#3a3a3a",
+        "oklch": "oklch(34.8% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-stroke-strong": {
+        "role": "neutral",
+        "displayName": "Firm Line (dark)",
+        "canonical": "#5a5a5a",
+        "oklch": "oklch(46.8% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-text": {
+        "role": "neutral",
+        "displayName": "Ink (dark)",
+        "canonical": "#ffffff",
+        "oklch": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-text-secondary": {
+        "role": "neutral",
+        "displayName": "Muted Ink (dark)",
+        "canonical": "#c8c8c8",
+        "oklch": "oklch(83.3% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-accent": {
+        "role": "primary",
+        "displayName": "System Blue (dark)",
+        "canonical": "#60cdff",
+        "oklch": "oklch(80.4% 0.122 230.8)",
+        "tonalRamp": [
+          "#000e23",
+          "#002a46",
+          "#004a6c",
+          "#006b94",
+          "#058ebd",
+          "#53b1dd",
+          "#85d5fc",
+          "#b4faff"
+        ],
+        "mode": "dark"
+      },
+      "dark-accent-hover": {
+        "role": "primary",
+        "displayName": "System Blue Hover (dark)",
+        "canonical": "#4cc2ff",
+        "oklch": "oklch(77.3% 0.136 235.1)",
+        "tonalRamp": [
+          "#000c27",
+          "#00294c",
+          "#004973",
+          "#006a9c",
+          "#008dc7",
+          "#4cb0e6",
+          "#80d4ff",
+          "#b0f9ff"
+        ],
+        "mode": "dark"
+      },
+      "dark-on-accent": {
+        "role": "neutral",
+        "displayName": "On Blue (dark)",
+        "canonical": "#000000",
+        "oklch": "oklch(0.0% 0.000 0.0)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-select": {
+        "role": "neutral",
+        "displayName": "Selection Grey (dark)",
+        "canonical": "#2d2d2d",
+        "oklch": "oklch(29.7% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-focus": {
+        "role": "neutral",
+        "displayName": "Focus Ink (dark)",
+        "canonical": "#ffffff",
+        "oklch": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-ok": {
+        "role": "status",
+        "displayName": "Working Green (dark)",
+        "canonical": "#6ccb5f",
+        "oklch": "oklch(75.9% 0.172 141.3)",
+        "tonalRamp": [
+          "#001300",
+          "#003100",
+          "#005200",
+          "#1d750f",
+          "#3b9a2d",
+          "#6abc5e",
+          "#96df8b",
+          "#c2ffb9"
+        ],
+        "mode": "dark"
+      },
+      "dark-ok-bg": {
+        "role": "status",
+        "displayName": "Working Green Wash (dark)",
+        "canonical": "#1f3a1c",
+        "oklch": "oklch(31.8% 0.061 141.9)",
+        "tonalRamp": [
+          "#030f02",
+          "#192a17",
+          "#334930",
+          "#4f694c",
+          "#6e8c6a",
+          "#92ae8f",
+          "#b8d2b5",
+          "#dff6dc"
+        ],
+        "mode": "dark"
+      },
+      "dark-warn": {
+        "role": "status",
+        "displayName": "Needs-a-Look Amber (dark)",
+        "canonical": "#fce100",
+        "oklch": "oklch(90.4% 0.188 100.5)",
+        "tonalRamp": [
+          "#170700",
+          "#352200",
+          "#554000",
+          "#786000",
+          "#9d8100",
+          "#bda600",
+          "#dfcb48",
+          "#fff187"
+        ],
+        "mode": "dark"
+      },
+      "dark-warn-bg": {
+        "role": "status",
+        "displayName": "Needs-a-Look Amber Wash (dark)",
+        "canonical": "#433519",
+        "oklch": "oklch(33.7% 0.047 83.2)",
+        "tonalRamp": [
+          "#110a01",
+          "#2d2412",
+          "#4c402b",
+          "#6d5f45",
+          "#908062",
+          "#b2a388",
+          "#d5c8ae",
+          "#f9edd7"
+        ],
+        "mode": "dark"
+      },
+      "dark-bad": {
+        "role": "status",
+        "displayName": "Problem Red (dark)",
+        "canonical": "#ff99a4",
+        "oklch": "oklch(79.1% 0.123 13.3)",
+        "tonalRamp": [
+          "#210004",
+          "#450d19",
+          "#6c2733",
+          "#95434f",
+          "#c0616d",
+          "#e08891",
+          "#ffafb7",
+          "#ffd8de"
+        ],
+        "mode": "dark"
+      },
+      "dark-bad-bg": {
+        "role": "status",
+        "displayName": "Problem Red Wash (dark)",
+        "canonical": "#442726",
+        "oklch": "oklch(31.0% 0.044 22.1)",
+        "tonalRamp": [
+          "#150706",
+          "#331f1e",
+          "#533b39",
+          "#765957",
+          "#9b7876",
+          "#bd9c9a",
+          "#dfc1bf",
+          "#ffe7e5"
+        ],
+        "mode": "dark"
+      },
+      "dark-idle": {
+        "role": "status",
+        "displayName": "Resting Grey (dark)",
+        "canonical": "#c8c8c8",
+        "oklch": "oklch(83.3% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-idle-bg": {
+        "role": "status",
+        "displayName": "Resting Grey Wash (dark)",
+        "canonical": "#383838",
+        "oklch": "oklch(34.1% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-preview": {
+        "role": "neutral",
+        "displayName": "Camera Black (dark)",
+        "canonical": "#141414",
+        "oklch": "oklch(19.1% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      },
+      "dark-preview-text": {
+        "role": "neutral",
+        "displayName": "Camera Caption (dark)",
+        "canonical": "#c8c8c8",
+        "oklch": "oklch(83.3% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "mode": "dark"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Page Title",
+        "purpose": "Page titles on Set up and every settings page."
+      },
+      "headline": {
+        "displayName": "State Headline",
+        "purpose": "The Home state line."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "App name and mode tile names; the Start/Stop label is 18px 600."
+      },
+      "title-sm": {
+        "displayName": "Group Title",
+        "purpose": "Group titles (15px), setup step titles (16px), the current nav item."
+      },
+      "body-lg": {
+        "displayName": "How-to",
+        "purpose": "The how-to line on Home."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Application base: row titles, status detail, nav items, radio labels."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Text in buttons, inputs and lists; row values."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Row hints, footnotes, chips (600); nav badge at 12px."
+      },
+      "label-mono": {
+        "displayName": "Diagnostics",
+        "purpose": "The optional diagnostics line only."
+      }
+    },
+    "shadows": [],
+    "elevation": "Flat. Tonal layering ground, surface, surface-raised, separated by 1px strokes; no shadows.",
+    "focus": [
+      {
+        "name": "focus-ring",
+        "value": "2px solid {colors.focus}",
+        "purpose": "Every focusable control; custom-painted controls draw it 4px outside themselves."
+      }
+    ],
+    "motion": [
+      {
+        "name": "hold-fill",
+        "value": "linear fill over 3000ms, stepped every 30ms",
+        "purpose": "Caregiver hold button only; empties on release."
+      }
+    ],
+    "modes": {
+      "source": "QGuiApplication.styleHints().colorScheme()",
+      "light": "unprefixed color tokens",
+      "dark": "dark- prefixed color tokens"
+    },
+    "icons": {
+      "set": "Lucide (ISC)",
+      "stroke": "2px; 2.2px in the state disc",
+      "sizes": {
+        "button": "16px",
+        "holdButton": "18px",
+        "nav": "20px",
+        "modeTile": "32px",
+        "stateDisc": "36px"
+      },
+      "filled": [
+        "play",
+        "stop",
+        "pause"
+      ]
+    },
+    "breakpoints": [
+      {
+        "name": "min-window",
+        "value": "900x640"
+      },
+      {
+        "name": "default-window",
+        "value": "1080x780"
+      },
+      {
+        "name": "sidebar",
+        "value": "256px"
+      },
+      {
+        "name": "content-max",
+        "value": "880px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default action: quiet, OS-native, optional Lucide icon on the left.",
+      "html": "<button class=\"ds-btn\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\"/><path d=\"M21 3v5h-5\"/><path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\"/><path d=\"M8 16H3v5\"/></svg><span>Refresh</span></button>",
+      "css": ".ds-btn { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; display:inline-flex; align-items:center; gap:8px; background:#ffffff; color:#1b1b1b; border:1px solid #c9c9c9; border-radius:6px; padding:8px 16px; min-height:40px; font-size:14px; cursor:pointer; } .ds-btn:hover { background:#f9f9f9; } .ds-btn:active { background:#e9e9e9; } .ds-btn:focus-visible { outline: 2px solid #1b1b1b; outline-offset: 0; } .ds-btn:disabled { background:#f3f3f3; color:#5c5c5c; border-color:#e1e1e1; }"
+    },
+    {
+      "name": "Accent Button",
+      "kind": "button",
+      "refersTo": "button-accent",
+      "description": "The one primary action in a dialog.",
+      "html": "<button class=\"ds-btn-accent\">OK</button>",
+      "css": ".ds-btn-accent { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; background:#005fb8; color:#ffffff; border:1px solid #005fb8; border-radius:6px; padding:8px 16px; min-height:40px; font-size:14px; font-weight:600; cursor:pointer; } .ds-btn-accent:hover { background:#1a6fc4; } .ds-btn-accent:focus-visible { outline: 2px solid #1b1b1b; outline-offset: 0; }"
+    },
+    {
+      "name": "Big Start/Stop",
+      "kind": "button",
+      "refersTo": "big-toggle-start",
+      "description": "Home and setup step 3: accent with a play icon when stopped, default with a stop square when running.",
+      "html": "<button class=\"ds-big-toggle\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"currentColor\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"6 3 20 12 6 21 6 3\"/></svg><span>Start</span></button>",
+      "css": ".ds-big-toggle { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; display:inline-flex; align-items:center; justify-content:center; gap:10px; min-width:132px; min-height:58px; padding:8px 18px; border-radius:8px; border:1px solid #005fb8; background:#005fb8; color:#ffffff; font-size:18px; font-weight:600; cursor:pointer; } .ds-big-toggle:hover { background:#1a6fc4; } .ds-big-toggle:focus-visible { outline: 2px solid #1b1b1b; outline-offset: 0; }"
+    },
+    {
+      "name": "Combo Box",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Choice field with a Lucide chevron; line edits and spin boxes share the shape.",
+      "html": "<button class=\"ds-combo\"><span>Like a mouse (recommended)</span><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m6 9 6 6 6-6\"/></svg></button>",
+      "css": ".ds-combo { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; display:inline-flex; align-items:center; justify-content:space-between; gap:12px; min-width:220px; min-height:38px; padding:7px 10px; background:#f9f9f9; color:#1b1b1b; border:1px solid #c9c9c9; border-radius:6px; font-size:14px; cursor:pointer; } .ds-combo svg { color:#5c5c5c; } .ds-combo:focus-visible { border:2px solid #1b1b1b; outline:none; }"
+    },
+    {
+      "name": "Sidebar Item",
+      "kind": "nav",
+      "refersTo": "nav-item-selected",
+      "description": "One page in the sidebar; the current page gets the select fill, an accent pill and a semibold label.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item is-current\" href=\"#\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\"/><path d=\"M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg><span>Home</span></a><a class=\"ds-nav-item\" href=\"#\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><path d=\"M8 14s1.5 2 4 2 4-2 4-2\"/><path d=\"M9 9h.01\"/><path d=\"M15 9h.01\"/></svg><span>Head pointer</span><em>In use</em></a></nav>",
+      "css": ".ds-nav { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; width:232px; background:#f3f3f3; padding:8px; display:flex; flex-direction:column; gap:2px; } .ds-nav-item { position:relative; display:flex; align-items:center; gap:12px; height:40px; padding:0 10px 0 14px; border-radius:6px; color:#1b1b1b; text-decoration:none; font-size:15px; } .ds-nav-item em { margin-left:auto; font-style:normal; font-size:12px; color:#5c5c5c; } .ds-nav-item:hover, .ds-nav-item.is-current { background:#e9e9e9; } .ds-nav-item.is-current { font-weight:600; } .ds-nav-item.is-current::before { content:''; position:absolute; left:0; top:12px; width:3px; height:16px; border-radius:1.5px; background:#005fb8; } .ds-nav-item:focus-visible { outline: 2px solid #1b1b1b; outline-offset: 0; }"
+    },
+    {
+      "name": "State Chip",
+      "kind": "chip",
+      "refersTo": "chip-ok",
+      "description": "The state's name in its tone, always beside the status text.",
+      "html": "<span class=\"ds-chip ds-chip-ok\">Tracking</span> <span class=\"ds-chip ds-chip-warn\">No face</span> <span class=\"ds-chip ds-chip-idle\">Stopped</span>",
+      "css": ".ds-chip { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; display:inline-block; border-radius:11px; padding:2px 10px; font-size:13px; font-weight:600; } .ds-chip-ok { background:#dff6dd; color:#0f7b0f; } .ds-chip-warn { background:#fff4ce; color:#8a5300; } .ds-chip-idle { background:#ebebeb; color:#5c5c5c; }"
+    },
+    {
+      "name": "Settings Group",
+      "kind": "card",
+      "refersTo": "group-card",
+      "description": "Titled card of rows: title and hint left, control right, hairline dividers; shown with On/Off switches.",
+      "html": "<div class=\"ds-group-title\">Moving</div><div class=\"ds-group\"><div class=\"ds-row\"><div><div class=\"ds-row-title\">Snap to buttons</div></div><label class=\"ds-switch\"><span>On</span><i></i></label></div><div class=\"ds-row\"><div><div class=\"ds-row-title\">Smile action</div><div class=\"ds-row-hint\">A big smile clicks, for when winking is hard.</div></div><label class=\"ds-switch is-off\"><span>Off</span><i></i></label></div></div>",
+      "css": ".ds-group-title { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; font-size:15px; font-weight:600; color:#1b1b1b; margin:10px 0 8px; } .ds-group { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; background:#ffffff; border:1px solid #e1e1e1; border-radius:8px; max-width:560px; } .ds-row { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:12px 18px; } .ds-row + .ds-row { border-top:1px solid #e1e1e1; } .ds-row-title { font-size:15px; color:#1b1b1b; } .ds-row-hint { font-size:13px; color:#5c5c5c; margin-top:2px; } .ds-switch { display:inline-flex; align-items:center; gap:10px; font-size:15px; color:#1b1b1b; cursor:pointer; } .ds-switch i { position:relative; box-sizing:border-box; width:44px; height:22px; border-radius:11px; background:#005fb8; } .ds-switch i::after { content:''; position:absolute; right:5px; top:5px; width:12px; height:12px; border-radius:50%; background:#ffffff; } .ds-switch.is-off i { background:transparent; border:1.2px solid #5c5c5c; } .ds-switch.is-off i::after { left:4px; right:auto; top:4.8px; width:10px; height:10px; background:#5c5c5c; }"
+    },
+    {
+      "name": "Mode Tile",
+      "kind": "custom",
+      "refersTo": "mode-tile",
+      "description": "A whole card that is a radio, Grid 3 sized; the chosen tile gets a 2px accent border.",
+      "html": "<div class=\"ds-tile is-checked\" tabindex=\"0\"><span class=\"ds-radio\"></span><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><path d=\"M8 14s1.5 2 4 2 4-2 4-2\"/><path d=\"M9 9h.01\"/><path d=\"M15 9h.01\"/></svg><div><div class=\"ds-tile-title\">Head pointer</div><div class=\"ds-tile-hint\">Move the head to steer, wink or blink to click.</div></div></div>",
+      "css": ".ds-tile { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; display:flex; align-items:flex-start; gap:12px; min-height:84px; box-sizing:border-box; padding:14px 16px 14px 14px; background:#ffffff; border:1px solid #c9c9c9; border-radius:8px; color:#1b1b1b; cursor:pointer; max-width:560px; } .ds-tile:hover { background:#f9f9f9; } .ds-tile.is-checked { border:2px solid #005fb8; background:#e9e9e9; } .ds-tile:focus-visible { outline: 2px solid #1b1b1b; outline-offset: 0; } .ds-radio { flex:none; width:18px; height:18px; border-radius:50%; border:1.5px solid #5c5c5c; margin-top:7px; box-sizing:border-box; } .ds-tile.is-checked .ds-radio { border:5px solid #005fb8; } .ds-tile-title { font-size:17px; font-weight:600; } .ds-tile-hint { font-size:13px; color:#5c5c5c; margin-top:4px; }"
+    },
+    {
+      "name": "Home Status Card",
+      "kind": "custom",
+      "refersTo": "state-disc",
+      "description": "72px tinted state disc with its own icon, 26px headline, chip and detail; Start/Stop sits at the right.",
+      "html": "<div class=\"ds-status\"><div class=\"ds-disc\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"36\" height=\"36\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><path d=\"M8 14s1.5 2 4 2 4-2 4-2\"/><path d=\"M9 9h.01\"/><path d=\"M15 9h.01\"/></svg></div><div><div class=\"ds-headline\">Head pointer is on</div><div class=\"ds-status-line\"><span class=\"ds-chip-s\">Tracking</span><span>Following the nose.</span></div></div></div>",
+      "css": ".ds-status { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; display:flex; align-items:flex-start; gap:20px; padding:20px 22px 18px; background:#ffffff; border:1px solid #e1e1e1; border-radius:8px; color:#1b1b1b; max-width:640px; } .ds-disc { flex:none; width:72px; height:72px; border-radius:50%; background:#dff6dd; color:#0f7b0f; display:grid; place-items:center; } .ds-disc svg { stroke-width:2.2; } .ds-headline { font-size:26px; font-weight:600; } .ds-status-line { display:flex; align-items:center; gap:10px; margin-top:8px; font-size:15px; } .ds-chip-s { border-radius:11px; padding:2px 10px; font-size:13px; font-weight:600; background:#dff6dd; color:#0f7b0f; }"
+    },
+    {
+      "name": "Hold Button",
+      "kind": "button",
+      "refersTo": "hold-button",
+      "description": "Caregiver unlock: fills with the select grey while held for 3 seconds; the only motion in the system.",
+      "html": "<button class=\"ds-hold\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/></svg><span>Caregiver: hold to open</span></button>",
+      "css": ".ds-hold { font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; position:relative; overflow:hidden; display:flex; align-items:center; gap:10px; width:232px; min-height:44px; padding:0 12px; background:#ffffff; color:#1b1b1b; border:1px solid #c9c9c9; border-radius:6px; font-size:15px; cursor:pointer; } .ds-hold::before { content:''; position:absolute; inset:0; width:0; background:#e9e9e9; transition:width 3s linear; } .ds-hold:active::before { width:100%; } .ds-hold > * { position:relative; } .ds-hold:focus-visible { outline: 2px solid #1b1b1b; outline-offset: 0; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Settings App You Already Know",
+    "overview": "Finger Mouse looks like the operating system's own Settings app, on purpose. A caregiver who has ever changed a setting on Windows 11 or macOS should know how to drive it before reading a word: sidebar of pages on the left, a page title and one-line intro, titled groups of rows on white cards, controls on the right of each row. The category standard is the identity; the craft bar is Windows 11 Settings, macOS System Settings and Grid 3, and the sizes lean toward Grid 3 because the person using it reads Home from a seat and every click costs them effort.\n\nThe system follows the OS light or dark mode and has two complete palettes with matching roles. Surfaces are flat: a mica-grey ground, cards that are a step lighter (or darker) with a 1px stroke, and no shadows. One accent blue does all the pointing (primary action, current selection, slider fill, step numbers, switches that are on). Green, amber and red appear only to report state, and always alongside an icon and words.\n\nDensity is calm and generous: a 15px base text, 40px nav rows and buttons, 84px mode tiles, a 58px Start/Stop, a single content column capped at 880px. Motion is absent apart from the hold-to-open fill; nothing flashes or slides.",
+    "keyCharacteristics": [
+      "System light/dark, two full palettes with identical role names.",
+      "Flat tonal layering with 1px strokes; no shadows anywhere.",
+      "One accent blue for action and selection; status hues only for state.",
+      "System UI face at 15px base, semibold for every heading.",
+      "Lucide stroke icons at 2px stroke, tinted to the text colour.",
+      "Large, forgiving targets; a strong ink-coloured focus ring."
+    ],
+    "rules": [
+      {
+        "name": "The One Blue Rule",
+        "body": "Blue means \"act here\" or \"this one is chosen\". It never decorates, never fills a card, never colours body text.",
+        "section": "colors"
+      },
+      {
+        "name": "The Words-First State Rule",
+        "body": "A status hue never appears alone. Every state shows a tinted disc with its own icon, a headline in words, and a chip with its name; colour only backs them up. If the hue were removed, the state must still read.",
+        "section": "colors"
+      },
+      {
+        "name": "The Native Face Rule",
+        "body": "Use the system UI face and nothing else for interface text. The 15px base is deliberately a step above Qt's default so it reads from a seat; do not shrink it.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Weight Rule",
+        "body": "Headings are 600; body is 400. The single exception is the oversized live sign letter on the Sign language page (88px, 700).",
+        "section": "typography"
+      },
+      {
+        "name": "The One Column Rule",
+        "body": "Settings never sit side by side in columns. One column, title and hint on the left of each row, the control on the right.",
+        "section": "layout"
+      },
+      {
+        "name": "The Stroke-Not-Shadow Rule",
+        "body": "A surface is separated by a 1px `stroke` (cards) or `stroke-strong` (controls), never by a shadow or glow.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** take every colour from the active palette (`colors()`), so light and dark stay in step; add any new token to both palettes with the same name.",
+      "**Do** pair every state with an icon and words, then tint it with its `*-bg` / ink pair.",
+      "**Do** build settings as a titled group card of rows: title and hint left, control right, 1px dividers between.",
+      "**Do** keep primary actions large (the 58px Start/Stop, 84px tiles) and make new targets at least 44px tall; default buttons and sidebar rows currently ship at 40px, which is below that floor, not a standard to copy.",
+      "**Do** use Lucide icons at 2px stroke, tinted to `text`, with a greyed copy for disabled.",
+      "**Do** keep the 2px ink focus ring on every focusable control, including custom-painted ones."
+    ],
+    "donts": [
+      "**Don't** use the accent blue for decoration, card fills, body text or status.",
+      "**Don't** show green, amber or red without an icon and a word.",
+      "**Don't** add shadows, glows or gradients; separate with 1px strokes and tonal steps.",
+      "**Don't** introduce a second typeface or a web display face; the system UI face is the identity.",
+      "**Don't** lay settings out in side-by-side columns or bring back a tab strip.",
+      "**Don't** add motion in the window beyond the hold-button fill; nothing flashes, pulses or slides.",
+      "**Don't** add uppercase eyebrows or kicker labels above titles; the page title and one-line intro carry the page."
+    ]
+  }
+}

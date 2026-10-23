@@ -88,3 +88,18 @@ def test_eye_calibration_json_round_trips_through_settings():
 def test_junk_eye_calibration_is_dropped_not_stored():
     s = st.validate({"eye_calibration": "not a real calibration"})
     assert s.eye_calibration == ""
+
+
+def test_caregiver_pin_is_stored_hashed_and_checked():
+    stored = st.hash_pin("2468")
+    assert "2468" not in stored
+    s = st.validate({"caregiver_lock": True, "caregiver_pin": stored})
+    assert s.caregiver_lock and s.caregiver_pin == stored
+    assert st.pin_matches(s.caregiver_pin, "2468")
+    assert not st.pin_matches(s.caregiver_pin, "1357")
+    assert not st.pin_matches("", "2468")
+
+
+def test_a_malformed_pin_is_dropped_so_the_lock_still_opens_by_holding():
+    s = st.validate({"caregiver_lock": True, "caregiver_pin": "1234"})
+    assert s.caregiver_lock and s.caregiver_pin == ""

@@ -33,17 +33,19 @@ from typing import Any, Optional
 
 try:
     import numpy as np
-    from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
+    from PySide6.QtCore import QPoint, QRect, QRegularExpression, QSize, Qt, QTimer, QUrl
     from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QGuiApplication, QIcon, QImage,
-                               QKeySequence, QPainter, QPen, QPixmap, QShortcut)
-    from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                                   QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
-                                   QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider,
-                                   QSystemTrayIcon, QTabWidget, QVBoxLayout, QWidget)
+                               QKeySequence, QPainter, QPen, QPixmap, QRegularExpressionValidator, QShortcut)
+    from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+                                   QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                                   QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QRadioButton,
+                                   QScrollArea, QSizePolicy, QSlider, QStackedWidget, QSystemTrayIcon, QVBoxLayout,
+                                   QWidget)
 
     import app_settings
     from app_settings import Settings
     from app_version import APP_NAME, APP_VERSION, PUBLISHER, SOURCE_URL
+    import ui_theme
     import updates
     from camera import CameraCapabilities, CameraInfo, OpenCVCamera, list_cameras, probe_camera_indices, \
         probe_resolutions, validate_stream_url
@@ -484,18 +486,8 @@ class TeachSignsDialog(QDialog):
         self.setModal(True)
         self.setWindowTitle("Teach your signs")
         self.setMinimumSize(720, 540)
-        # A window of its own doesn't inherit the main window's look: give it the same dark theme.
-        sheet = main.styleSheet() if isinstance(main, QWidget) else ""
-        self.setStyleSheet(sheet + """
-            QDialog { background: #0e1626; color: #e8edf6; }
-            QListWidget { background: #111a2b; color: #e8edf6; border: 1px solid #27344a; border-radius: 8px;
-                          font-size: 14px; }
-            QListWidget::item:selected { background: #22d3ee; color: #05070d; }
-            QPushButton { background: #26344b; color: #e8edf6; border-radius: 8px; padding: 7px 12px; }
-            QPushButton:hover { background: #31425f; }
-            QProgressBar { background: #182338; border: none; border-radius: 4px; max-height: 8px; }
-            QProgressBar::chunk { background: #22d3ee; border-radius: 4px; }
-        """)
+        # A window of its own doesn't inherit the main window's look: give it the same theme.
+        self.setStyleSheet(ui_theme.stylesheet())
         self.book = sign_language.SignBook.from_json(app_settings.load_signs_text())
         self.queue: list[str] = []
         self.current: Optional[str] = None
@@ -515,17 +507,17 @@ class TeachSignsDialog(QDialog):
         right = QVBoxLayout()
         self.letter = QLabel("")
         self.letter.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.letter.setStyleSheet("font-size: 84px; font-weight: 800; color: #e8edf6;")
+        self.letter.setObjectName("signLetter")
         right.addWidget(self.letter)
         self.how = QLabel("")
         self.how.setWordWrap(True)
         self.how.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.how.setStyleSheet("font-size: 15px; color: #aebbd0;")
+        self.how.setObjectName("secondary")
         right.addWidget(self.how)
         self.status = QLabel("Pick “Teach all” to go through every sign, or choose one on the left.")
         self.status.setWordWrap(True)
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status.setStyleSheet("font-size: 14px; color: #fbbf24;")
+        self.status.setObjectName("warnText")
         right.addWidget(self.status)
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
@@ -533,12 +525,13 @@ class TeachSignsDialog(QDialog):
         right.addWidget(self.bar)
         self.seeing = QLabel("I see:, ")
         self.seeing.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.seeing.setStyleSheet("font-size: 15px; color: #34d399;")
+        self.seeing.setObjectName("okText")
         right.addWidget(self.seeing)
         right.addStretch(1)
 
         row = QHBoxLayout()
         self.teach_all = QPushButton("Teach all")
+        self.teach_all.setObjectName("accent")
         self.teach_all.setToolTip("Every sign you haven't taught yet, in order. Already taught all? Then every sign again.")
         self.teach_all.clicked.connect(self._teach_all)
         self.teach_one = QPushButton("Teach this one")
@@ -683,8 +676,8 @@ class TeachSignsDialog(QDialog):
         if self.main.engine is not None:
             self.main.engine.reload_signs()
         self._fill_list()
-        if self.main.settings_dialog is not None:
-            self.main.settings_dialog.update_sign_status()
+        if self.main.settings_panel is not None:
+            self.main.settings_panel.update_sign_status()
 
     def done(self, result: int) -> None:  # noqa: D401 (Qt name)
         self._tick.stop()
@@ -694,252 +687,277 @@ class TeachSignsDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
-# Settings dialog
+# Settings pages
 # ---------------------------------------------------------------------------
 
-class SettingsDialog(QDialog):
-    """Every setting, in tabs. Changes apply to tracking at once and are saved."""
+class Group:
+    """A titled block of settings rows on one card, the system Settings way."""
+
+    def __init__(self, page_layout: QVBoxLayout, title: str = "") -> None:
+        if title:
+            label = QLabel(title)
+            label.setObjectName("groupTitle")
+            page_layout.addSpacing(10)
+            page_layout.addWidget(label)
+        self.frame = QFrame()
+        self.frame.setObjectName("group")
+        self.layout = QVBoxLayout(self.frame)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+        page_layout.addWidget(self.frame)
+        self.rows = 0
+
+    def add(self, widget: QWidget) -> QWidget:
+        widget.sep_line = None           # type: ignore[attr-defined]
+        if self.rows:
+            line = QFrame()
+            line.setObjectName("rowLine")
+            self.layout.addWidget(line)
+            widget.sep_line = line       # type: ignore[attr-defined]
+        self.layout.addWidget(widget)
+        self.rows += 1
+        return widget
+
+    def row(self, title: str, hint: str = "", *controls: QWidget, stack: bool = False) -> QWidget:
+        """Title and hint on the left, controls on the right (or underneath with ``stack``)."""
+        row = QWidget()
+        row.setObjectName("page")
+        outer = QVBoxLayout(row) if stack else QHBoxLayout(row)
+        outer.setContentsMargins(18, 12, 18, 12)
+        outer.setSpacing(10 if stack else 18)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        label = QLabel(title)
+        label.setObjectName("rowTitle")
+        label.setWordWrap(True)
+        text.addWidget(label)
+        h = None
+        if hint:
+            h = QLabel(hint)
+            h.setObjectName("rowHint")
+            h.setWordWrap(True)
+            h.setTextFormat(Qt.TextFormat.RichText)
+            h.setOpenExternalLinks(True)
+            text.addWidget(h)
+        outer.addLayout(text, 1)
+        if controls:
+            box = QHBoxLayout()
+            box.setSpacing(10)
+            if stack:
+                box.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            for c in controls:
+                box.addWidget(c)
+            if stack:
+                box.addStretch(1)
+            outer.addLayout(box)
+        if controls and not title:
+            label.hide()
+        row.title_label = label          # type: ignore[attr-defined]
+        row.hint_label = h               # type: ignore[attr-defined]
+        return self.add(row)
+
+
+MODE_NAMES = {"head": "Head pointer", "sign": "Sign language typing", "hand": "Hand gestures", "eye": "Eye gaze"}
+
+
+class SettingsPanel(QWidget):
+    """Every setting, as pages for the main window's sidebar. Changes apply to
+    tracking at once and are saved. The panel itself is never shown; the main
+    window places each of its ``pages`` in its own page stack."""
+
+    PAGES = (("head", "head", "Head pointer"), ("sign", "sign", "Sign language"), ("hand", "hand", "Hand gestures"),
+             ("eye", "eye", "Eye gaze"), ("pointer", "pointer", "Pointer"), ("camera", "camera", "Camera"),
+             ("caregiver", "caregiver", "Caregiver"), ("advanced", "advanced", "Advanced"))
 
     def __init__(self, main: "MainWindow") -> None:
         super().__init__(main)
         self.main = main
-        self.setWindowTitle(f"{APP_NAME} settings")
-        self.setMinimumWidth(560)
+        self.hide()
         self._loading = True
         self.controls: dict[str, Any] = {}
         self.twins: list[tuple[str, Any]] = []
-
-        tabs = QTabWidget()
-        for build, name in ((self._pointer_tab, "Pointer"), (self._click_tab, "Click && drag"),
-                            (self._scroll_tab, "Scrolling"), (self._head_tab, "Head pointer"), (self._eye_tab, "Eye tracking"), (self._sign_tab, "Sign language"),
-                            (self._camera_tab, "Camera"), (self._gestures_tab, "Hide gesture"),
-                            (self._advanced_tab, "Advanced")):
-            # Each page scrolls rather than squeezing its text when the window is short.
+        self.mode_rows: dict[str, tuple[QLabel, QPushButton]] = {}
+        self.pages: dict[str, QScrollArea] = {}
+        builders = {"head": self._head_page, "sign": self._sign_page, "hand": self._hand_page, "eye": self._eye_page,
+                    "pointer": self._pointer_page, "camera": self._camera_page, "caregiver": self._caregiver_page,
+                    "advanced": self._advanced_page}
+        for key, _icon, _name in self.PAGES:
             scroll = QScrollArea()
             scroll.setObjectName("pageScroll")
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.Shape.NoFrame)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            scroll.setWidget(build())
-            tabs.addTab(scroll, name)
-        self.resize(620, 680)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.close)
-        reset = buttons.addButton("Restore defaults", QDialogButtonBox.ButtonRole.ResetRole)
-        reset.clicked.connect(self._restore_defaults)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(tabs)
-        layout.addWidget(buttons)
+            scroll.setWidget(builders[key]())
+            self.pages[key] = scroll
         self.load(main.settings)
         self._loading = False
 
     # -- building blocks ------------------------------------------------------
-    def _page(self) -> tuple[QWidget, QVBoxLayout]:
+    def _page(self, title: str, intro: str = "") -> tuple[QWidget, QVBoxLayout]:
         page = QWidget()
         page.setObjectName("page")
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
+        outer = QHBoxLayout(page)
+        outer.setContentsMargins(36, 28, 36, 36)
+        column = QWidget()
+        column.setObjectName("page")
+        column.setMaximumWidth(880)
+        layout = QVBoxLayout(column)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        heading = QLabel(title)
+        heading.setObjectName("pageTitle")
+        layout.addWidget(heading)
+        if intro:
+            text = QLabel(intro)
+            text.setObjectName("pageIntro")
+            text.setWordWrap(True)
+            text.setTextFormat(Qt.TextFormat.RichText)
+            layout.addWidget(text)
+        layout.addSpacing(6)
+        outer.addWidget(column, 1)
+        outer.addStretch(0)
+        page.column_layout = layout        # type: ignore[attr-defined]
         return page, layout
 
-    def _hint(self, layout: QVBoxLayout, text: str) -> QLabel:
-        label = QLabel(text)
-        label.setObjectName("hint")
-        label.setWordWrap(True)
-        label.setTextFormat(Qt.TextFormat.RichText)
-        label.setOpenExternalLinks(True)
-        layout.addWidget(label)
-        return label
+    def _done(self, page: QWidget, layout: QVBoxLayout) -> QWidget:
+        layout.addStretch(1)
+        return page
 
-    def _slider(self, layout: QVBoxLayout, key: str, label: str, lo: int, hi: int,
+    def _mode_row(self, l: QVBoxLayout, mode: str) -> None:
+        """The top of a mode's page: is it the way of steering in use? If not, one button switches to it."""
+        g = Group(l)
+        label = QLabel()
+        label.setObjectName("rowTitle")
+        use = QPushButton(f"Use {MODE_NAMES[mode].lower()}")
+        use.setObjectName("accent")
+        use.clicked.connect(lambda: self.main.change_settings(tracking_mode=mode))
+        row = QWidget()
+        row.setObjectName("page")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(18, 12, 18, 12)
+        h.addWidget(label, 1)
+        h.addWidget(use)
+        g.add(row)
+        self.mode_rows[mode] = (label, use)
+
+    def _slider(self, g: Group, key: str, label: str, lo: int, hi: int,
                 fmt: str = "{}", hint: str = "", step: int = 1) -> QSlider:
-        row = QHBoxLayout()
-        title = QLabel(label)
         value = QLabel()
-        value.setObjectName("value")
-        row.addWidget(title)
-        row.addStretch(1)
-        row.addWidget(value)
+        value.setObjectName("rowValue")
+        value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        value.setMinimumWidth(96)
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(lo, hi)
         slider.setSingleStep(step)
         slider.setPageStep(max(step, (hi - lo) // 10))
         slider.setAccessibleName(label)
-        title.setBuddy(slider)
+        slider.setFixedWidth(240)
+        slider.setCursor(Qt.CursorShape.PointingHandCursor)
 
         def changed(v: int) -> None:
             value.setText(fmt.format(v))
             self._set(key, v)
 
         slider.valueChanged.connect(changed)
-        layout.addLayout(row)
-        layout.addWidget(slider)
-        if hint:
-            self._hint(layout, hint)
+        g.row(label, hint, value, slider)
         self._register(key, (slider, value, fmt))
         return slider
 
-    def _check(self, layout: QVBoxLayout, key: str, label: str, hint: str = "") -> QCheckBox:
-        box = QCheckBox(label)
+    def _check(self, g: Group, key: str, label: str, hint: str = "") -> QCheckBox:
+        box = ui_theme.ToggleSwitch()
+        box.setAccessibleName(label)
         box.toggled.connect(lambda on: self._set(key, on))
-        layout.addWidget(box)
-        if hint:
-            self._hint(layout, hint)
+        g.row(label, hint, box)
         self._register(key, box)
         return box
 
-    def _choice(self, layout: QVBoxLayout, key: str, label: str, options: list[tuple[str, str]],
+    def _choice(self, g: Group, key: str, label: str, options: list[tuple[str, str]],
                 hint: str = "") -> QComboBox:
-        row = QHBoxLayout()
-        title = QLabel(label)
         combo = QComboBox()
         for value, text in options:
             combo.addItem(text, value)
         combo.setAccessibleName(label)
-        title.setBuddy(combo)
+        combo.setCursor(Qt.CursorShape.PointingHandCursor)
         combo.currentIndexChanged.connect(lambda _i: self._set(key, combo.currentData()))
-        row.addWidget(title)
-        row.addStretch(1)
-        row.addWidget(combo)
-        layout.addLayout(row)
-        if hint:
-            self._hint(layout, hint)
+        g.row(label, hint, combo)
         self._register(key, combo)
         return combo
 
-    # -- tabs ---------------------------------------------------------------
-    def _pointer_tab(self) -> QWidget:
-        page, l = self._page()
-        self._choice(l, "tracking_mode", "Tracking mode",
-                     [("hand", "Hand gestures"), ("head", "Head pointer (nose + winks)"), ("eye", "Eye gaze (beta)"),
-                      ("sign", "Sign language typing")],
-                     "Move the pointer with a hand pinching to click, by moving your head (the nose steers, "
-                     "winks click), or by looking at the screen. The settings below are for hand mode; the "
-                     "head pointer and eye gaze have their own tabs.")
-        self._slider(l, "smoothing", "Smoothing", 0, 100, "{}%",
-                     "Higher holds the pointer steadier; lower follows faster. Small hand tremors are "
-                     "smoothed away more strongly than real movement.")
-        self._slider(l, "reach", "Hand reach", 50, 100, "{}% of the camera view",
-                     "How much of the camera picture your fingertip sweeps to cover the whole screen. "
-                     "Lower means less arm movement; the preview shows this area as a box.")
-        self._choice(l, "screen", "Screen", [("primary", "Main screen"), ("all", "All screens together")])
-        self._slider(l, "halo_size", "Tracking halo size", 16, 80, "{} px")
-        self._check(l, "show_halo", "Show the halo around the pointer")
-        self._check(l, "pause_on_physical_mouse", "Pause hand control while I use my mouse or trackpad",
-                    "When you move your real mouse, hand control steps aside for a moment, "
-                    "also a quick way to reach the Stop button.")
-        sys_cursor = QPushButton("System pointer size…")
-        sys_cursor.clicked.connect(self.main.open_system_cursor_settings)
-        l.addWidget(sys_cursor, 0, Qt.AlignmentFlag.AlignLeft)
-        l.addStretch(1)
-        return page
+    @staticmethod
+    def _button(text: str, slot, icon_name: str = "", accent: bool = False) -> QPushButton:
+        b = QPushButton(("  " + text) if icon_name else text)   # a little room between icon and words
+        if icon_name:
+            b.setIcon(ui_theme.icon(icon_name, ui_theme.colors()["on_accent" if accent else "text"], 16))
+            b.icon_name = icon_name          # type: ignore[attr-defined]
+        if accent:
+            b.setObjectName("accent")
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.clicked.connect(slot)
+        return b
 
-    def _click_tab(self) -> QWidget:
-        page, l = self._page()
-        self._hint(l, "<b>Quick pinch</b> (thumb and index): left-click where the pinch began. "
-                      "<b>Pinch and hold</b>: press and hold the button, move to drag, open your fingers "
-                      "to drop. The pointer stays still while a click is being decided.")
-        self._check(l, "click_enabled", "Pinch to click")
-        self._slider(l, "pinch_threshold", "Pinch closes at", 10, 60, "{}% of hand size",
-                     "How close thumb and index must come. Raise it if pinches are missed; lower it if "
-                     "clicks happen before you mean them.")
-        self._slider(l, "pinch_release_gap", "Opens again at", 5, 40, "+{}%",
-                     "How much further apart they must open to let go. A wider gap ignores more wobble.")
-        self._slider(l, "click_stability", "Click steadiness", 1, 5, "{} frames",
-                     "How many camera frames must agree before a pinch or release counts.")
-        self._check(l, "drag_enabled", "Pinch and hold to drag")
-        self._slider(l, "pinch_hold_ms", "Hold for", 150, 1500, "{} ms", step=10,
-                     hint="How long to hold a pinch before it becomes a press-and-hold.")
-        l.addStretch(1)
-        return page
-
-    def _scroll_tab(self) -> QWidget:
-        page, l = self._page()
-        self._check(l, "scroll_enabled", "Scroll with a hand pose")
-        self._choice(l, "scroll_pose", "Pose",
-                     [("two_fingers", "Index and middle up (recommended)"), ("index", "Index finger only")],
-                     "Hold the pose still for a moment to start. Then move up or down: the further from "
-                     "where you started, the faster it scrolls. Lower your fingers to stop. "
-                     "“Index only” is close to how most people point, so it scrolls by accident more.")
-        self._slider(l, "scroll_sensitivity", "Speed", 5, 100, "{}%")
-        self._slider(l, "scroll_dead_zone", "Dead zone", 5, 60, "{}% of hand size",
-                     "How far to move before scrolling starts, so small wobbles don't scroll.")
-        self._check(l, "scroll_reverse", "Reverse direction")
-        l.addStretch(1)
-        return page
-
-    def _head_tab(self) -> QWidget:
-        page, l = self._page()
-        self._hint(l, "Steer with your nose, the steadiest point on a face, so talking or smiling doesn't move "
-                      "the pointer. Wink to click. No calibration needed: pick Head pointer under Pointer → "
-                      "Tracking mode and press Start.")
-        self._choice(l, "head_pointer_mode", "Movement",
+    # -- pages ------------------------------------------------------------------
+    def _head_page(self) -> QWidget:
+        page, l = self._page("Head pointer", "The nose steers, so talking or smiling doesn't move the pointer. "
+                                             "Winks click. No calibration needed.")
+        self._mode_row(l, "head")
+        g = Group(l, "Moving")
+        self._choice(g, "head_pointer_mode", "Movement",
                      [("relative", "Like a mouse (recommended)"), ("absolute", "Point at the spot")],
-                     "Like a mouse: small, careful head movements are precise and a quick flick crosses the "
-                     "screen; turning back doesn't bring the pointer back. Point at the spot is simpler, but "
-                     "needs Re-centre if you shift in your seat.")
-        self._slider(l, "head_speed", "Speed", 1, 100, "{}%")
-        self._slider(l, "head_acceleration", "Acceleration", 0, 100, "{}%",
-                     "How much further a quick movement goes than a slow one (Like a mouse only).")
-        self._slider(l, "head_reach", "Turn to reach the edge", 10, 80, "{}% of face width",
-                     "Point at the spot only: smaller means less turning to reach the screen edges.")
-        self._slider(l, "head_dead_zone", "Steadiness", 0, 100, "{}%",
-                     "Head movement slower than this is ignored, so tremor or breathing doesn't drift the pointer.")
-        self._slider(l, "head_smoothing", "Smoothing", 0, 100, "{}%")
-        self._check(l, "snap_enabled", "Snap, hold the pointer still once it settles",
-                    "Once the pointer has stayed in one spot for a moment it locks there, perfectly still, "
-                    "and only lets go when you clearly move away. Makes small buttons much easier to hit.")
-        self._slider(l, "snap_strength", "Snap strength", 1, 10, "{}% of the screen",
-                     "How far you have to move to pull the pointer out of a snap. Higher is steadier; lower "
-                     "lets go sooner.")
-        recentre = QPushButton("Re-centre now")
-        recentre.setToolTip("Point at the spot: makes where your head is now the centre. Like a mouse: puts the "
-                            "pointer in the middle of the screen.")
-        recentre.clicked.connect(self.main.recentre_head)
-        l.addWidget(recentre, 0, Qt.AlignmentFlag.AlignLeft)
-        l.addSpacing(6)
-        self._choice(l, "head_click", "Click with",
+                     "Like a mouse: small movements are precise, a quick flick crosses the screen. "
+                     "Point at the spot is simpler but needs Re-centre after shifting in the seat.")
+        self._slider(g, "head_speed", "Speed", 1, 100, "{}%")
+        self.accel_row = self._slider(g, "head_acceleration", "Acceleration", 0, 100, "{}%",
+                                      "How much further a quick movement goes than a slow one.").parentWidget()
+        self.reach_row = self._slider(g, "head_reach", "Turn to reach the edge", 10, 80, "{}% of face",
+                                      "Smaller means less turning.").parentWidget()
+        self._slider(g, "head_dead_zone", "Steadiness", 0, 100, "{}%",
+                     "Slower movement than this is ignored, so tremor or breathing doesn't drift the pointer.")
+        self._slider(g, "head_smoothing", "Smoothing", 0, 100, "{}%")
+        g.row("Re-centre", "Puts the pointer back in the middle (Like a mouse), or makes where the head is now "
+                           "the centre (Point at the spot).",
+              self._button("Re-centre now", self.main.recentre_head, "refresh"))
+        g = Group(l, "Clicking")
+        self._choice(g, "head_click", "Click with",
                      [("wink", "A wink (recommended)"), ("blink", "A long blink")],
-                     "Wink: left eye left-clicks, right eye right-clicks. A long blink with both eyes is there if winking is hard.")
-        self._slider(l, "head_wink_ms", "Wink hold time", 100, 600, "{} ms", step=25,
-                     hint="How long to hold a wink before it clicks. Ordinary blinks close both eyes and never "
-                          "click; the pointer holds still while you wink so the click lands where you aimed.")
-        self._check(l, "head_swap_winks", "Swap left and right winks",
-                    "Only if your camera shows an un-mirrored picture and winks come out the wrong way round.")
-        self._choice(l, "head_mouth_action", "Open your mouth to",
+                     "Wink: left eye left-clicks, right eye right-clicks. A long blink is there if winking is hard.")
+        self._slider(g, "head_wink_ms", "Wink hold time", 100, 600, "{} ms", step=25,
+                     hint="Ordinary blinks close both eyes and never click. The pointer holds still while winking.")
+        self._check(g, "head_swap_winks", "Swap left and right winks",
+                    "Only if the camera picture isn't mirrored and winks come out the wrong way round.")
+        g = Group(l, "Face actions")
+        self._choice(g, "head_mouth_action", "Open the mouth to",
                      [("drag", "Drag"), ("scroll", "Scroll"), ("click", "Click"), ("off", "Nothing")],
-                     "Drag holds the button down while your mouth is open. Scroll: open your mouth, then nod down or up, the further, the faster.")
-        self._choice(l, "head_smile_action", "A held smile",
+                     "Drag holds the button down while the mouth is open. Scroll: open, then nod up or down.")
+        self._choice(g, "head_smile_action", "A held smile",
                      [("off", "Nothing"), ("pause", "Pause / resume"), ("double_click", "Double-click"),
                       ("right_click", "Right-click")],
-                     "Needs a clear smile held for about a third of a second, so a passing grin doesn't count. Pause / resume is handy for talking to someone without the pointer moving.")
-        l.addStretch(1)
-        return page
+                     "Needs a clear smile held for about a third of a second, so a laugh doesn't count.")
+        self._snap_group(l)
+        return self._done(page, l)
 
-    def _sign_tab(self) -> QWidget:
-        page, l = self._page()
-        self._hint(l, "Type by fingerspelling (the ASL alphabet) into whatever app has the keyboard. First show "
-                      "Finger Mouse your own signs, about two seconds each, so it recognises <i>your</i> hand. "
-                      "Then hold each letter steady for a moment to type it; relax your hand for a moment between "
-                      "double letters. You also teach a sign for space and one for delete.")
-        self.sign_status = QLabel()
-        self.sign_status.setObjectName("value")
-        l.addWidget(self.sign_status)
-        self.teach_button = QPushButton("Teach signs…")
-        self.teach_button.clicked.connect(self.main.open_teach_signs)
-        l.addWidget(self.teach_button, 0, Qt.AlignmentFlag.AlignLeft)
-        self._hint(l, "Teaching needs tracking running in sign mode: pick Sign language typing under Pointer → "
-                      "Tracking mode, press Start tracking, then come back here.")
-        self._slider(l, "sign_hold_ms", "Hold to type", 250, 1500, "{} ms", step=50,
-                     hint="How long to hold a sign before it types. Shorter is faster; longer makes fewer mistakes.")
-        self._slider(l, "sign_confidence", "Certainty", 5, 60, "{}%",
-                     hint="How clearly a sign must match one you taught rather than the next closest before it "
-                          "types. Raise it if similar letters (M/N, A/S/E) get mixed up.")
-        self._check(l, "sign_capitals", "Type capital letters")
-        l.addStretch(1)
-        return page
+    def _snap_group(self, l: QVBoxLayout) -> None:
+        g = Group(l, "Snap")
+        self._check(g, "snap_enabled", "Snap the pointer still",
+                    "Once the pointer settles it locks there and only lets go on a clear move. "
+                    "Makes small buttons easier to hit.")
+        self._slider(g, "snap_strength", "Snap strength", 1, 10, "{}% of screen",
+                     "How far to move to pull out of a snap. Higher is steadier.")
+
+    def _sign_page(self) -> QWidget:
+        page, l = self._page("Sign language typing", "Types fingerspelling (the ASL alphabet) into whatever app "
+                                                     "has the keyboard. It learns this person's own signs.")
+        self._mode_row(l, "sign")
+        g = Group(l, "Signs")
+        self.teach_button = self._button("Teach signs…", self.main.open_teach_signs, "hand", accent=True)
+        self.sign_status = g.row("No signs taught yet", "About two seconds per sign, about a minute for all. "
+                                 "Needs sign language typing running.", self.teach_button).title_label
+        g = Group(l, "Typing")
+        self._slider(g, "sign_hold_ms", "Hold to type", 250, 1500, "{} ms", step=50,
+                     hint="Shorter is faster; longer makes fewer mistakes.")
+        self._slider(g, "sign_confidence", "Certainty", 5, 60, "{}%",
+                     hint="Raise it if similar letters (M and N, A and S) get mixed up.")
+        self._check(g, "sign_capitals", "Type capital letters")
+        return self._done(page, l)
 
     def update_sign_status(self) -> None:
         book = sign_language.SignBook.from_json(app_settings.load_signs_text())
@@ -954,170 +972,225 @@ class SettingsDialog(QDialog):
         self.sign_status.setText(text if n else "No signs taught yet")
         ready = self.main.is_tracking() and self.main.settings.tracking_mode == "sign"
         self.teach_button.setEnabled(ready)
-        self.teach_button.setToolTip("" if ready else "Switch to Sign language typing and press Start tracking first.")
+        self.teach_button.setToolTip("" if ready else "Switch to sign language typing and press Start first.")
 
-    def _eye_tab(self) -> QWidget:
-        page, l = self._page()
-        self._hint(l, "Look at the screen to move the pointer instead of using your hand. Needs a short "
-                      "calibration first, and is happiest when your head stays roughly still and facing "
-                      "the camera, a head turn can throw it off more than a hand-tracking wobble would.")
-        self._choice(l, "eye_click_mode", "Click by",
-                     [("dwell", "Holding your gaze still (recommended)"),
-                      ("blink", "A deliberate blink"),
+    def _hand_page(self) -> QWidget:
+        page, l = self._page("Hand gestures", "Point with the index finger to move. Pinch to click, pinch and "
+                                              "hold to drag, two fingers up to scroll.")
+        self._mode_row(l, "hand")
+        g = Group(l, "Moving")
+        self._slider(g, "smoothing", "Smoothing", 0, 100, "{}%",
+                     "Higher holds the pointer steadier; lower follows faster. Small tremors are smoothed more.")
+        self._slider(g, "reach", "Hand reach", 50, 100, "{}% of view",
+                     "How much of the camera picture the fingertip sweeps to cover the screen. Lower means less "
+                     "arm movement.")
+        g = Group(l, "Clicking and dragging")
+        self._check(g, "click_enabled", "Pinch to click", "Thumb and index: left-click where the pinch began.")
+        self._slider(g, "pinch_threshold", "Pinch closes at", 10, 60, "{}% of hand",
+                     "Raise it if pinches are missed; lower it if clicks happen too early.")
+        self._slider(g, "pinch_release_gap", "Opens again at", 5, 40, "+{}%",
+                     "A wider gap ignores more wobble.")
+        self._slider(g, "click_stability", "Click steadiness", 1, 5, "{} frames",
+                     "How many camera frames must agree before a pinch or release counts.")
+        self._check(g, "drag_enabled", "Pinch and hold to drag")
+        self._slider(g, "pinch_hold_ms", "Hold for", 150, 1500, "{} ms", step=10,
+                     hint="How long a pinch is held before it becomes a press-and-hold.")
+        g = Group(l, "Scrolling")
+        self._check(g, "scroll_enabled", "Scroll with a hand pose")
+        self._choice(g, "scroll_pose", "Pose",
+                     [("two_fingers", "Index and middle up (recommended)"), ("index", "Index finger only")],
+                     "Hold still to start, then move up or down. Further is faster. Index only scrolls by "
+                     "accident more often.")
+        self._slider(g, "scroll_sensitivity", "Speed", 5, 100, "{}%")
+        self._slider(g, "scroll_dead_zone", "Dead zone", 5, 60, "{}% of hand",
+                     "How far to move before scrolling starts.")
+        self._check(g, "scroll_reverse", "Reverse direction")
+        g = Group(l, "Hide gesture")
+        box = ui_theme.ToggleSwitch()
+        box.setAccessibleName("Hide gesture")
+        box.toggled.connect(self._hide_toggled)
+        self.controls["hide_gesture_enabled"] = box
+        g.row("Hide gesture", "Hold up only the middle finger to stop tracking and put Finger Mouse away. "
+                              "Never touches other apps.", box)
+        self._choice(g, "hide_gesture_action", "When it's made",
+                     [("tray", "Stop and hide to the tray"), ("minimize", "Stop and minimise"),
+                      ("quit", "Stop and quit Finger Mouse")])
+        self._slider(g, "hide_gesture_hold_ms", "Hold for", 600, 3000, "{} ms", step=100,
+                     hint="Longer is safer against doing it by accident.")
+        return self._done(page, l)
+
+    def _eye_page(self) -> QWidget:
+        page, l = self._page("Eye gaze (beta)", "Look where the pointer should go. Needs calibrating, and works "
+                                                "best with the head fairly still and facing the camera.")
+        self._mode_row(l, "eye")
+        g = Group(l, "Calibration")
+        self.calibrate_button = self._button("Calibrate…", self.main.open_calibration, "eye", accent=True)
+        self.recentre_button = self._button("Re-centre", self.main.open_recentre, "refresh")
+        self.recentre_button.setToolTip("Drifted since calibrating? Look at one dot for a second to fix it.")
+        self.calibration_status = g.row("Not calibrated yet", "Needs eye gaze running. Re-centre fixes drift in "
+                                        "one second.", self.calibrate_button, self.recentre_button).title_label
+        self._choice(g, "eye_calibration_detail", "Calibration",
+                     [("thorough", "Thorough, about 70 s (recommended)"), ("quick", "Quick, about 25 s")])
+        g = Group(l, "Clicking")
+        self._choice(g, "eye_click_mode", "Click by",
+                     [("dwell", "Holding the gaze still (recommended)"), ("blink", "A deliberate blink"),
                       ("both", "Either one")])
-        self._slider(l, "eye_dwell_ms", "Dwell time", 300, 2500, "{} ms", step=50,
+        self._slider(g, "eye_dwell_ms", "Dwell time", 300, 2500, "{} ms", step=50,
                      hint="How long a steady gaze takes to click.")
-        self._slider(l, "eye_dwell_radius", "Dwell steadiness", 1, 15, "{}% of the screen",
-                     hint="How far your gaze may drift and still count as “still”.")
-        self._slider(l, "eye_blink_ms", "Blink hold time", 100, 800, "{} ms", step=25,
-                     hint="How long an eye must stay shut to count as a deliberate blink, not an ordinary one.")
-        self._slider(l, "eye_smoothing", "Smoothing", 0, 100, "{}%",
-                     hint="Gaze tracking is noisier than hand tracking, so this usually wants to sit higher.")
-        self._check(l, "snap_enabled", "Snap, hold the pointer still once it settles",
-                    "Once the pointer has stayed in one spot for a moment it locks there, perfectly still, "
-                    "and only lets go when you clearly move away. Makes small buttons much easier to hit.")
-        self._slider(l, "snap_strength", "Snap strength", 1, 10, "{}% of the screen",
-                     "How far you have to move to pull the pointer out of a snap. Higher is steadier; lower "
-                     "lets go sooner.")
-        l.addSpacing(6)
-        self.calibration_status = QLabel()
-        self.calibration_status.setObjectName("value")
-        l.addWidget(self.calibration_status)
-        self._choice(l, "eye_calibration_detail", "Calibration",
-                     [("thorough", "Thorough, 25 points, a moving dot and a check (about 70 s, recommended)"),
-                      ("quick", "Quick, 13 points (about 25 s)")])
-        row = QHBoxLayout()
-        self.calibrate_button = QPushButton("Calibrate…")
-        self.calibrate_button.clicked.connect(self.main.open_calibration)
-        row.addWidget(self.calibrate_button)
-        self.recentre_button = QPushButton("Re-centre (1 s)")
-        self.recentre_button.setToolTip("Pointer drifted since calibrating? Look at one dot for a second to fix it.")
-        self.recentre_button.clicked.connect(self.main.open_recentre)
-        row.addWidget(self.recentre_button)
-        row.addStretch(1)
-        l.addLayout(row)
-        self._hint(l, "Calibrating needs tracking already running in eye mode: pick Eye gaze above, close "
-                      "this window, press Start tracking, then open Settings again to calibrate.")
-        l.addStretch(1)
-        return page
+        self._slider(g, "eye_dwell_radius", "Dwell steadiness", 1, 15, "{}% of screen",
+                     hint="How far the gaze may drift and still count as still.")
+        self._slider(g, "eye_blink_ms", "Blink hold time", 100, 800, "{} ms", step=25,
+                     hint="How long an eye must stay shut to count as a deliberate blink.")
+        g = Group(l, "Moving")
+        self._slider(g, "eye_smoothing", "Smoothing", 0, 100, "{}%",
+                     hint="Gaze is noisier than a hand, so this usually sits higher.")
+        self._snap_group(l)
+        return self._done(page, l)
 
-    def _camera_tab(self) -> QWidget:
-        page, l = self._page()
-        row = QHBoxLayout()
-        title = QLabel("Camera")
+    def _pointer_page(self) -> QWidget:
+        page, l = self._page("Pointer", "How the pointer looks and which screen it covers. These apply to every "
+                                        "way of steering.")
+        g = Group(l)
+        self._choice(g, "screen", "Screen", [("primary", "Main screen"), ("all", "All screens together")])
+        self._check(g, "show_halo", "Show the halo", "A ring around the pointer so it's easy to find.")
+        self._slider(g, "halo_size", "Halo size", 16, 80, "{} px")
+        self._check(g, "pause_on_physical_mouse", "Pause while the real mouse moves",
+                    "Someone helping can take over with the mouse or trackpad at any time.")
+        g.row("System pointer size", "The pointer itself is sized in the system's own settings.",
+              self._button("Open system settings", self.main.open_system_cursor_settings, "monitor"))
+        return self._done(page, l)
+
+    def _camera_page(self) -> QWidget:
+        page, l = self._page("Camera", "Phone apps such as DroidCam or Iriun, and Continuity Camera on a Mac, "
+                                       "appear here as ordinary cameras.")
+        g = Group(l)
         self.camera_combo = QComboBox()
         self.camera_combo.setAccessibleName("Camera")
         self.camera_combo.currentIndexChanged.connect(self._camera_chosen)
-        refresh = QPushButton("Refresh")
-        refresh.clicked.connect(self.main.refresh_cameras)
-        row.addWidget(title)
-        row.addWidget(self.camera_combo, 1)
-        row.addWidget(refresh)
-        l.addLayout(row)
+        g.row("Camera", "Automatic tries real cameras before virtual ones.", self.camera_combo,
+              self._button("Refresh", self.main.refresh_cameras, "refresh"), stack=True)
 
-        self.stream_row = QWidget()
-        self.stream_row.setObjectName("page")
-        sl = QVBoxLayout(self.stream_row)
-        sl.setContentsMargins(0, 0, 0, 0)
         self.stream_url = QLineEdit()
         self.stream_url.setPlaceholderText("http://192.168.1.20:8080/video")
         self.stream_url.setAccessibleName("Stream address")
+        self.stream_url.setMinimumWidth(300)
         self.stream_url.editingFinished.connect(self._stream_url_done)
-        sl.addWidget(QLabel("Stream address"))
-        sl.addWidget(self.stream_url)
+        self.stream_row = g.row("Stream address", "Experimental. Apps such as IP Webcam show an address like "
+                                "this. Use it on a network you trust: plain http video isn't encrypted.",
+                                self.stream_url, stack=True)
         self.stream_error = QLabel()
         self.stream_error.setObjectName("error")
-        sl.addWidget(self.stream_error)
-        self._hint(sl, "Experimental. Phone apps such as “IP Webcam” show an address like this while "
-                       "they run. Use it on a network you trust, plain http video isn't encrypted.")
-        l.addWidget(self.stream_row)
-
-        self._hint(l, "<b>Using a phone as the camera:</b> apps such as DroidCam or Iriun, and iPhone "
-                      "Continuity Camera on a Mac, add the phone to this list as a regular camera. "
-                      "Cameras marked “virtual” are software cameras; Automatic tries real ones first.")
+        self.stream_row.layout().addWidget(self.stream_error)
 
         self.camera_info = QLabel("Start tracking to see what the camera delivers.")
-        self.camera_info.setObjectName("value")
+        self.camera_info.setObjectName("rowHint")
         self.camera_info.setWordWrap(True)
-        l.addWidget(self.camera_info)
+        info_row = g.row("What it delivers", "")
+        info_row.layout().itemAt(0).layout().addWidget(self.camera_info)
 
-        res_row = QHBoxLayout()
-        self.resolution = self._choice(l, "camera_resolution", "Resolution",
+        g = Group(l, "Picture")
+        self.resolution = self._choice(g, "camera_resolution", "Resolution",
                                        [(r, "Automatic (1280×720 if offered)" if r == "auto" else r.replace("x", "×"))
-                                        for r in app_settings.RESOLUTIONS])
-        self.detect_modes = QPushButton("Check which the camera supports")
-        self.detect_modes.clicked.connect(self._detect_modes)
-        res_row.addWidget(self.detect_modes)
-        res_row.addStretch(1)
-        l.addLayout(res_row)
+                                        for r in app_settings.RESOLUTIONS],
+                                       "Some cameras show a wider area in 16:9 modes such as 1280×720.")
+        self.detect_modes = self._button("Check what it supports", self._detect_modes)
         self.modes_note = QLabel()
-        self.modes_note.setObjectName("hint")
+        self.modes_note.setObjectName("rowHint")
         self.modes_note.setWordWrap(True)
-        l.addWidget(self.modes_note)
+        modes_row = g.row("Camera modes", " ", self.detect_modes)
+        modes_row.layout().itemAt(0).layout().addWidget(self.modes_note)
+        self.modes_reason = modes_row.hint_label
 
-        zoom_row = QHBoxLayout()
         self.zoom = QDoubleSpinBox()
         self.zoom.setRange(0, 1000)
         self.zoom.setDecimals(0)
         self.zoom.setAccessibleName("Camera zoom")
         self.zoom.valueChanged.connect(lambda v: None if self._loading else self._set("camera_zoom", v))
-        self.zoom_label = QLabel("Zoom")
-        zoom_row.addWidget(self.zoom_label)
-        zoom_row.addWidget(self.zoom)
-        self.driver_button = QPushButton("Camera driver settings…")
-        self.driver_button.clicked.connect(lambda: self.main.camera_command("driver_settings"))
-        zoom_row.addStretch(1)
-        zoom_row.addWidget(self.driver_button)
-        l.addLayout(zoom_row)
-        self._hint(l, "Field of view is set by the camera's lens; software can't widen it. Some cameras "
-                      "show a wider area in 16:9 modes such as 1280×720, so try those. Zoom and the driver "
-                      "settings window appear only when your camera's driver really offers them.")
-        self._check(l, "mirror", "Mirror the picture (move right, pointer goes right)")
-        l.addStretch(1)
-        return page
+        self.driver_button = self._button("Driver settings…", lambda: self.main.camera_command("driver_settings"))
+        zoom_row = g.row("Zoom", "", self.zoom, self.driver_button)
+        self.zoom_label = zoom_row.title_label
+        self._check(g, "mirror", "Mirror the picture", "Move right and the pointer goes right.")
+        return self._done(page, l)
 
-    def _gestures_tab(self) -> QWidget:
-        page, l = self._page()
-        self._hint(l, "An optional shortcut: hold up only your middle finger for a moment to stop tracking "
-                      "and put Finger Mouse away. It's off unless you turn it on. It only affects Finger "
-                      "Mouse, it never closes or touches any other app.")
-        box = QCheckBox("Enable the hide gesture")
-        box.toggled.connect(self._hide_toggled)
-        self.controls["hide_gesture_enabled"] = box
-        l.addWidget(box)
-        self._choice(l, "hide_gesture_action", "When it's made",
-                     [("tray", "Stop tracking and hide to the tray"),
-                      ("minimize", "Stop tracking and minimise the window"),
-                      ("quit", "Stop tracking and quit Finger Mouse")])
-        self._slider(l, "hide_gesture_hold_ms", "Hold for", 600, 3000, "{} ms", step=100,
-                     hint="Longer is safer against doing it by accident.")
-        l.addStretch(1)
-        return page
+    def _caregiver_page(self) -> QWidget:
+        page, l = self._page("Caregiver", "For whoever sets Finger Mouse up. Lock it so the settings can't be "
+                                          "changed by accident, and leave a note for the next person who helps.")
+        g = Group(l, "Lock")
+        self.lock_switch = ui_theme.ToggleSwitch()
+        self.lock_switch.setAccessibleName("Caregiver lock")
+        self.lock_switch.toggled.connect(self._lock_toggled)
+        g.row("Caregiver lock", "Only Home shows. To get back to setup, press and hold Caregiver at the bottom "
+                                "of the sidebar for 3 seconds.", self.lock_switch)
+        self.pin_button = self._button("Set a PIN…", self._set_pin)
+        self.pin_remove = self._button("Remove PIN", self._remove_pin)
+        self.pin_row = g.row("PIN (optional)", "Also asks for a PIN after the hold. Pick one the person using "
+                             "Finger Mouse doesn't know.", self.pin_button, self.pin_remove)
+        g = Group(l, "Handover note")
+        self.summary = QLabel()
+        self.summary.setObjectName("summary")
+        self.summary.setWordWrap(True)
+        self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        copy = self._button("Copy note", self._copy_summary, "copy")
+        row = g.row("How this person uses Finger Mouse", "Paste it into a care plan, an email or a sticky note.",
+                    stack=True)
+        row.layout().addWidget(self.summary)
+        row.layout().addWidget(copy, 0, Qt.AlignmentFlag.AlignLeft)
+        return self._done(page, l)
 
-    def _advanced_tab(self) -> QWidget:
-        page, l = self._page()
-        self._check(l, "show_landmarks", "Show hand landmarks in the preview")
-        self._check(l, "show_gesture_state", "Show the gesture state in the preview")
-        self._check(l, "show_diagnostics", "Show diagnostics (frame rates, timings, stalls)")
-        self._check(l, "verbose_logging", "Detailed logging",
-                    "Writes more detail to the log file. Useful when reporting a problem.")
-        self._check(l, "check_for_updates", "Tell me when a new version is out",
-                    "Checks GitHub once when the app opens. Nothing is downloaded or installed by itself.")
-        logs = QPushButton("Open the log folder")
-        logs.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.main.log_dir))))
-        l.addWidget(logs, 0, Qt.AlignmentFlag.AlignLeft)
-        about = QLabel(f"{APP_NAME} {APP_VERSION} · {PUBLISHER} · "
-                       f"<a href='{SOURCE_URL}'>source code</a>")
+    def update_caregiver(self) -> None:
+        s = self.main.settings
+        self._loading, was = True, self._loading
+        self.lock_switch.setChecked(s.caregiver_lock)
+        self._loading = was
+        self.pin_button.setText("Change PIN…" if s.caregiver_pin else "Set a PIN…")
+        self.pin_remove.setVisible(bool(s.caregiver_pin))
+        self.summary.setText(self.main.setup_summary())
+
+    def _lock_toggled(self, on: bool) -> None:
+        if self._loading:
+            return
+        self.main.set_caregiver_lock(on)
+
+    def _set_pin(self) -> None:
+        pin = PinDialog.ask_new(self.main)
+        if pin:
+            self.main.change_settings(caregiver_pin=app_settings.hash_pin(pin))
+            self.update_caregiver()
+
+    def _remove_pin(self) -> None:
+        self.main.change_settings(caregiver_pin="")
+        self.update_caregiver()
+
+    def _copy_summary(self) -> None:
+        QGuiApplication.clipboard().setText(self.main.setup_summary())
+        self.main.flash_footnote("Handover note copied.")
+
+    def _advanced_page(self) -> QWidget:
+        page, l = self._page("Advanced", "For checking and reporting problems.")
+        g = Group(l, "Preview")
+        self._check(g, "show_landmarks", "Show tracking points in the preview")
+        self._check(g, "show_gesture_state", "Show the gesture name in the preview")
+        self._check(g, "show_diagnostics", "Show diagnostics", "Frame rates, timings and stalls under the preview.")
+        g = Group(l, "Help and updates")
+        self._check(g, "verbose_logging", "Detailed logging", "Useful when reporting a problem.")
+        g.row("Log files", "", self._button("Open the log folder", lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(self.main.log_dir)))))
+        self._check(g, "check_for_updates", "Tell me when a new version is out",
+                    "Checks GitHub once when the app opens. Nothing installs by itself.")
+        g = Group(l, "Reset")
+        g.row("Restore defaults", "Every setting goes back to how it was when installed. Taught signs are kept.",
+              self._button("Restore defaults…", self._restore_defaults))
+        about = QLabel(f"{APP_NAME} {APP_VERSION} · {PUBLISHER} · <a href='{SOURCE_URL}'>source code</a>")
         about.setOpenExternalLinks(True)
-        about.setObjectName("hint")
-        l.addStretch(1)
+        about.setObjectName("footnote")
+        l.addSpacing(12)
         l.addWidget(about)
-        return page
+        return self._done(page, l)
 
     # -- state ------------------------------------------------------------------
     def _register(self, key: str, control: Any) -> None:
-        """A setting can appear on more than one tab (snap is on both the head
-        and the eye tab); every copy is kept, and all of them reload."""
+        """A setting can appear on more than one page (snap is on both the head
+        and the eye page); every copy is kept, and all of them reload."""
         if key in self.controls:
             self.twins.append((key, control))
         else:
@@ -1142,12 +1215,33 @@ class SettingsDialog(QDialog):
         self.update_camera_info()
         self.update_calibration_status()
         self.update_sign_status()
+        self.update_modes()
+        self.update_caregiver()
+        self._update_dependents()
         self._loading = was
+
+    def _update_dependents(self) -> None:
+        """Show only the settings that apply to the choices made above them."""
+        relative = self.main.settings.head_pointer_mode == "relative"
+        for row, show in ((self.accel_row, relative), (self.reach_row, not relative)):
+            row.setVisible(show)
+            if row.sep_line is not None:
+                row.sep_line.setVisible(show)
+
+    def update_modes(self) -> None:
+        current = self.main.settings.tracking_mode
+        for mode, (label, use) in self.mode_rows.items():
+            in_use = mode == current
+            label.setText(f"{MODE_NAMES[mode]} is the way of steering in use." if in_use
+                          else f"In use now: {MODE_NAMES[current].lower()}.")
+            use.setVisible(not in_use)
 
     def _set(self, key: str, value: Any) -> None:
         if self._loading:
             return
         self.main.change_settings(**{key: value})
+        if key == "head_pointer_mode":
+            self._update_dependents()
         if any(k == key for k, _ in self.twins):
             self.load(self.main.settings)       # bring the setting's other copy into line
 
@@ -1183,8 +1277,12 @@ class SettingsDialog(QDialog):
     def update_camera_info(self) -> None:
         caps = self.main.capabilities
         tracking = self.main.is_tracking()
-        self.detect_modes.setEnabled(not tracking and self.main.settings.camera.startswith("cv:"))
-        self.detect_modes.setToolTip("" if not tracking else "Stop tracking first; checking modes needs the camera.")
+        specific = self.main.settings.camera.startswith("cv:")
+        self.detect_modes.setEnabled(not tracking and specific)
+        reason = ("Press Stop first: checking needs the camera to itself." if tracking else
+                  "" if specific else "Choose a specific camera above first, not Automatic.")
+        self.modes_reason.setText(reason or "Asks the camera which picture sizes it can deliver.")
+        self.detect_modes.setToolTip(reason)
         if caps is None:
             self.camera_info.setText("Start tracking to see what the camera delivers.")
             self.zoom.setVisible(False)
@@ -1196,7 +1294,7 @@ class SettingsDialog(QDialog):
         self.camera_info.setText(f"Now receiving {caps.width}×{caps.height}{fps} via {caps.backend}.{notes}")
         if caps.zoom is None:
             self.zoom.setVisible(False)
-            self.zoom_label.setText("Zoom: not offered by this camera's driver")
+            self.zoom_label.setText("Zoom: not offered by this camera")
         else:
             self.zoom.setVisible(True)
             self.zoom_label.setText("Zoom (the driver's own units)")
@@ -1208,12 +1306,11 @@ class SettingsDialog(QDialog):
 
     def update_calibration_status(self) -> None:
         calibrated = bool(self.main.settings.eye_calibration)
-        self.calibration_status.setText("Calibrated ✓" if calibrated else "Not calibrated yet")
+        self.calibration_status.setText("Calibrated" if calibrated else "Not calibrated yet")
         ready = self.main.is_tracking() and self.main.settings.tracking_mode == "eye"
         self.calibrate_button.setEnabled(ready)
         self.recentre_button.setEnabled(ready and calibrated)
-        self.calibrate_button.setToolTip(
-            "" if ready else "Switch to Eye gaze mode and press Start tracking first.")
+        self.calibrate_button.setToolTip("" if ready else "Switch to eye gaze and press Start first.")
 
     def _detect_modes(self) -> None:
         cam_id = self.main.settings.camera
@@ -1238,12 +1335,12 @@ class SettingsDialog(QDialog):
         if self._loading:
             return
         if on and not self.main.settings.hide_gesture_confirmed:
-            box = QMessageBox(self)
+            box = QMessageBox(self.main)
             box.setIcon(QMessageBox.Icon.Warning)
             box.setWindowTitle("Turn on the hide gesture?")
-            box.setText("Holding up only your middle finger will stop tracking and put Finger Mouse away.")
+            box.setText("Holding up only the middle finger will stop tracking and put Finger Mouse away.")
             box.setInformativeText(
-                "It can happen by accident if you make that shape while working. It only affects "
+                "It can happen by accident if that shape is made while working. It only affects "
                 "Finger Mouse and never closes other apps. To bring Finger Mouse back, use its tray icon "
                 "or open it again. You can turn this off here at any time.")
             enable = box.addButton("Turn it on", QMessageBox.ButtonRole.AcceptRole)
@@ -1260,16 +1357,98 @@ class SettingsDialog(QDialog):
         self.main.change_settings(hide_gesture_enabled=on)
 
     def _restore_defaults(self) -> None:
-        answer = QMessageBox.question(self, "Restore defaults?",
-                                      "Put every setting back to how it was when Finger Mouse was installed?")
+        answer = QMessageBox.question(self.main, "Restore defaults?",
+                                      "Put every setting back to how it was when Finger Mouse was installed? "
+                                      "The caregiver lock and PIN are kept.")
         if answer == QMessageBox.StandardButton.Yes:
-            self.main.replace_settings(Settings())
+            s = self.main.settings
+            self.main.replace_settings(Settings().copy(caregiver_lock=s.caregiver_lock, caregiver_pin=s.caregiver_pin))
             self.load(self.main.settings)
+
+    def refresh_icons(self) -> None:
+        c = ui_theme.colors()
+        for b in self.findChildren(QPushButton):
+            name = getattr(b, "icon_name", "")
+            if name:
+                b.setIcon(ui_theme.icon(name, c["on_accent"] if b.objectName() == "accent" else c["text"], 16))
+
+
+class PinDialog(QDialog):
+    """Ask for the caregiver PIN (4 to 8 digits)."""
+
+    def __init__(self, parent: QWidget, title: str, prompt: str, confirm: bool = False) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(380)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+        text = QLabel(prompt)
+        text.setWordWrap(True)
+        layout.addWidget(text)
+        self.fields = []
+        for label in (("PIN", "Type it again") if confirm else ("PIN",)):
+            field = QLineEdit()
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+            field.setMaxLength(8)
+            field.setPlaceholderText(label)
+            field.setAccessibleName(label)
+            field.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d{0,8}"), field))
+            layout.addWidget(field)
+            self.fields.append(field)
+        self.error = QLabel()
+        self.error.setObjectName("error")
+        layout.addWidget(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName("accent")
+        buttons.accepted.connect(self._check)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _check(self) -> None:
+        pin = self.fields[0].text()
+        if len(pin) < 4:
+            self.error.setText("Use 4 to 8 digits.")
+        elif len(self.fields) == 2 and self.fields[1].text() != pin:
+            self.error.setText("The two PINs don't match.")
+        else:
+            self.accept()
+
+    def pin(self) -> str:
+        return self.fields[0].text()
+
+    @classmethod
+    def ask_new(cls, parent: QWidget) -> str:
+        d = cls(parent, "Set a caregiver PIN", "4 to 8 digits. It's asked for after holding Caregiver.", confirm=True)
+        return d.pin() if d.exec() == QDialog.DialogCode.Accepted else ""
+
+    @classmethod
+    def ask(cls, parent: QWidget) -> Optional[str]:
+        d = cls(parent, "Caregiver PIN", "Type the caregiver PIN to open setup.")
+        return d.pin() if d.exec() == QDialog.DialogCode.Accepted else None
 
 
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
+
+class ModeTile(QFrame):
+    """One way of steering on the Set up page: a big card that's a radio button, Grid 3 sized.
+    A click anywhere on it picks it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("tile")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumHeight(84)
+        self.radio: Optional[QRadioButton] = None
+
+    def mouseReleaseEvent(self, event: Any) -> None:  # noqa: N802 (Qt name)
+        if self.radio is not None and self.rect().contains(event.position().toPoint()):
+            self.radio.setChecked(True)
+            self.radio.setFocus()
+        super().mouseReleaseEvent(event)
+
 
 class MainWindow(QMainWindow):
     def __init__(self, log_dir: Path) -> None:
@@ -1280,7 +1459,9 @@ class MainWindow(QMainWindow):
         self.capabilities: Optional[CameraCapabilities] = None
         self.engine: Optional[TrackingEngine] = None
         self.output: Optional[PointerOutput] = None
-        self.settings_dialog: Optional[SettingsDialog] = None
+        self.settings_panel: Optional[SettingsPanel] = None
+        self._unlocked = False             # a caregiver opened setup while the lock is on
+        self._state = ("stopped", "Press Start to control the pointer.")   # what _set_status last showed
         self._results: "queue.Queue[tuple[Any, Any]]" = queue.Queue()
         self._output_events: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self._preview_seq = -1
@@ -1298,11 +1479,15 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
         self.setWindowIcon(app_icon())
-        self.setMinimumSize(640, 600)
-        self.resize(820, 760)
+        self.setMinimumSize(900, 640)
+        self.resize(1080, 780)
         self._build()
         self._apply_style()
         self._build_tray()
+        try:   # follow the system's light or dark mode while open
+            QGuiApplication.styleHints().colorSchemeChanged.connect(lambda _s: self._apply_style())
+        except AttributeError:
+            pass
 
         self.save_timer = QTimer(self, singleShot=True, interval=400)
         self.save_timer.timeout.connect(lambda: app_settings.save(self.settings))
@@ -1357,44 +1542,152 @@ class MainWindow(QMainWindow):
     # -- layout -----------------------------------------------------------------
     def _build(self) -> None:
         central = QWidget()
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(24, 20, 24, 18)
-        layout.setSpacing(12)
+        central.setObjectName("ground")
+        outer = QHBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        header = QHBoxLayout()
-        titles = QVBoxLayout()
-        title = QLabel(APP_NAME)
-        title.setObjectName("title")
-        self.subtitle = QLabel()
-        self.subtitle.setObjectName("subtitle")
-        self.subtitle.setWordWrap(True)
-        self._update_subtitle()
-        titles.addWidget(title)
-        titles.addWidget(self.subtitle)
-        header.addLayout(titles, 1)
-        settings_button = QPushButton("Settings")
-        settings_button.clicked.connect(self.open_settings)
-        header.addWidget(settings_button, 0, Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(header)
+        # -- sidebar ------------------------------------------------------------
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(256)
+        side = QVBoxLayout(sidebar)
+        side.setContentsMargins(12, 18, 12, 14)
+        side.setSpacing(2)
+        brand = QHBoxLayout()
+        brand.setContentsMargins(10, 0, 0, 14)
+        logo = QLabel()
+        logo.setPixmap(app_icon().pixmap(28, 28))
+        name = QLabel(APP_NAME)
+        name.setObjectName("appName")
+        brand.addWidget(logo)
+        brand.addSpacing(8)
+        brand.addWidget(name, 1)
+        side.addLayout(brand)
 
-        self.preview = QLabel("The camera picture appears here once tracking starts.")
-        self.preview.setObjectName("preview")
-        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setMinimumHeight(300)
-        self.preview.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
-        self.preview.setAccessibleName("Camera preview")
-        layout.addWidget(self.preview, 1)
+        self.stack = QStackedWidget()
+        self.nav: dict[str, ui_theme.NavButton] = {}
+        self._nav_group = QButtonGroup(self)
+        self._nav_group.setExclusive(True)
 
-        state_row = QHBoxLayout()
+        def add_nav(key: str, icon_name: str, text: str, page: QWidget) -> None:
+            button = ui_theme.NavButton(icon_name, text)
+            button.clicked.connect(lambda: self.open_page(key))
+            self._nav_group.addButton(button)
+            self.nav[key] = button
+            side.addWidget(button)
+            self.stack.addWidget(page)
+            page.setProperty("page_key", key)
+
+        add_nav("home", "home", "Home", self._build_home())
+        add_nav("setup", "setup", "Set up", self._build_setup())
+        self.settings_label = QLabel("Settings")
+        self.settings_label.setObjectName("secondary")
+        self.settings_label.setContentsMargins(14, 14, 0, 4)
+        side.addWidget(self.settings_label)
+        self.settings_panel = SettingsPanel(self)
+        for key, icon_name, text in SettingsPanel.PAGES:
+            add_nav(key, icon_name, text, self.settings_panel.pages[key])
+        side.addStretch(1)
+
+        self.unlock_button = ui_theme.HoldButton("lock", "Caregiver: hold to open")
+        self.unlock_button.setToolTip("Press and hold for 3 seconds to open setup.")
+        self.unlock_button.held.connect(self._unlock_held)
+        side.addWidget(self.unlock_button)
+        self.relock_button = QPushButton("  Lock setup again")
+        self.relock_button.setIcon(ui_theme.icon("lock", ui_theme.colors()["text"], 16))
+        self.relock_button.icon_name = "lock"     # type: ignore[attr-defined]
+        self.relock_button.clicked.connect(self._relock)
+        side.addWidget(self.relock_button)
+        version = QLabel(f"Version {APP_VERSION}")
+        version.setObjectName("footnote")
+        version.setContentsMargins(14, 8, 0, 0)
+        side.addWidget(version)
+
+        outer.addWidget(sidebar)
+        outer.addWidget(self.stack, 1)
+        self.setCentralWidget(central)
+        self.nav[self.settings.tracking_mode].set_badge("In use")
+        self._apply_lock()
+        self.open_page("home")
+
+    def _build_home(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("ground")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(32, 28, 32, 22)
+        layout.setSpacing(14)
+
+        card = QFrame()
+        card.setObjectName("statusCard")
+        grid = QGridLayout(card)
+        grid.setContentsMargins(22, 20, 22, 18)
+        grid.setHorizontalSpacing(20)
+        grid.setVerticalSpacing(8)
+        self.state_disc = ui_theme.StateDisc()
+        grid.addWidget(self.state_disc, 0, 0, 2, 1, Qt.AlignmentFlag.AlignTop)
+        self.headline = QLabel("Not running")
+        self.headline.setObjectName("headline")
+        self.headline.setWordWrap(True)
+        grid.addWidget(self.headline, 0, 1)
+        line = QHBoxLayout()
+        line.setSpacing(10)
         self.chip = QLabel("Stopped")
         self.chip.setObjectName("chip")
-        self.status = QLabel("Choose a camera and start tracking to control the pointer.")
+        self.status = QLabel("Press Start to control the pointer.")
         self.status.setObjectName("status")
         self.status.setWordWrap(True)
         self.status.setAccessibleName("Status")
-        state_row.addWidget(self.chip, 0, Qt.AlignmentFlag.AlignTop)
-        state_row.addWidget(self.status, 1)
-        layout.addLayout(state_row)
+        line.addWidget(self.chip, 0, Qt.AlignmentFlag.AlignTop)
+        line.addWidget(self.status, 1)
+        grid.addLayout(line, 1, 1)
+        self.start_button = QPushButton("Start")
+        self.start_button.setObjectName("bigToggle")
+        self.start_button.setProperty("running", False)
+        self.start_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.start_button.clicked.connect(self.toggle_tracking)
+        grid.addWidget(self.start_button, 0, 2, 2, 1, Qt.AlignmentFlag.AlignVCenter)
+        rule = QFrame()
+        rule.setObjectName("rowLine")
+        grid.addWidget(rule, 2, 0, 1, 3)
+        self.subtitle = QLabel()
+        self.subtitle.setObjectName("howTo")
+        self.subtitle.setWordWrap(True)
+        self._update_subtitle()
+        grid.addWidget(self.subtitle, 3, 0, 1, 3)
+        grid.setColumnStretch(1, 1)
+        layout.addWidget(card)
+
+        self.preview = QLabel()
+        self.preview.setObjectName("preview")
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setMinimumHeight(240)
+        self.preview.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.preview.setAccessibleName("Camera preview")
+        # While stopped: what the picture area is for, and the fix when there's no camera.
+        self.preview_empty = QWidget()
+        self.preview_empty.setObjectName("previewEmpty")
+        self.preview_empty.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        empty = QVBoxLayout(self.preview_empty)
+        empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty.setSpacing(14)
+        self.preview_icon = QLabel()
+        self.preview_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_text = QLabel()
+        self.preview_text.setObjectName("previewText")
+        self.preview_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_text.setWordWrap(True)
+        self.preview_fix = QPushButton("  Look for cameras again")
+        self.preview_fix.icon_name = "refresh"     # type: ignore[attr-defined]
+        self.preview_fix.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.preview_fix.clicked.connect(self.refresh_cameras)
+        empty.addWidget(self.preview_icon)
+        empty.addWidget(self.preview_text)
+        empty.addWidget(self.preview_fix, 0, Qt.AlignmentFlag.AlignCenter)
+        self.preview_stack = QStackedWidget()
+        self.preview_stack.addWidget(self.preview_empty)
+        self.preview_stack.addWidget(self.preview)
+        layout.addWidget(self.preview_stack, 1)
 
         self.diag = QLabel()
         self.diag.setObjectName("diag")
@@ -1402,93 +1695,433 @@ class MainWindow(QMainWindow):
         self.diag.setVisible(self.settings.show_diagnostics)
         layout.addWidget(self.diag)
 
-        controls = QHBoxLayout()
-        camera_label = QLabel("Camera")
+        self.footnote = QLabel()
+        self.footnote.setObjectName("footnote")
+        self.footnote.setWordWrap(True)
+        self._footnote_text = "Esc stops Finger Mouse. Moving the real mouse pauses it for a moment."
+        self.footnote.setText(self._footnote_text)
+        layout.addWidget(self.footnote)
+        return page
+
+    def _build_setup(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setObjectName("pageScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        page = QWidget()
+        page.setObjectName("page")
+        outer = QHBoxLayout(page)
+        outer.setContentsMargins(36, 28, 36, 36)
+        column = QWidget()
+        column.setObjectName("page")
+        column.setMaximumWidth(880)
+        l = QVBoxLayout(column)
+        l.setContentsMargins(0, 0, 0, 0)
+        l.setSpacing(8)
+        outer.addWidget(column, 1)
+        title = QLabel("Set up")
+        title.setObjectName("pageTitle")
+        l.addWidget(title)
+        intro = QLabel("Four steps for whoever is setting Finger Mouse up. Everything saves by itself.")
+        intro.setObjectName("pageIntro")
+        intro.setWordWrap(True)
+        l.addWidget(intro)
+        l.addSpacing(10)
+        self.steps: dict[int, tuple[QLabel, QLabel]] = {}
+
+        def step(n: int, name: str, hint: str) -> QVBoxLayout:
+            frame = QFrame()
+            frame.setObjectName("group")
+            box = QVBoxLayout(frame)
+            box.setContentsMargins(20, 16, 20, 18)
+            box.setSpacing(10)
+            head = QHBoxLayout()
+            head.setSpacing(10)
+            number = QLabel(str(n))
+            number.setObjectName("stepNumber")
+            number.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            number.setFixedSize(28, 28)
+            heading = QLabel(name)
+            heading.setObjectName("stepTitle")
+            state = QLabel()
+            state.setObjectName("stepState")
+            head.addWidget(number)
+            head.addWidget(heading, 1)
+            head.addWidget(state)
+            box.addLayout(head)
+            if hint:
+                h = QLabel(hint)
+                h.setObjectName("rowHint")
+                h.setWordWrap(True)
+                h.setContentsMargins(38, 0, 0, 0)
+                box.addWidget(h)
+            body = QVBoxLayout()
+            body.setContentsMargins(38, 4, 0, 0)
+            body.setSpacing(8)
+            box.addLayout(body)
+            l.addWidget(frame)
+            l.addSpacing(6)
+            self.steps[n] = (number, state)
+            return body
+
+        body = step(1, "Choose the camera", "Pick the webcam that faces the person. Automatic tries real "
+                                            "cameras first.")
+        row = QHBoxLayout()
         self.camera_combo = QComboBox()
         self.camera_combo.setAccessibleName("Camera")
-        self.camera_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.camera_combo.setMinimumWidth(240)
         self.camera_combo.currentIndexChanged.connect(self._quick_camera)
-        camera_label.setBuddy(self.camera_combo)
-        self.start_button = QPushButton("Start tracking")
-        self.start_button.setObjectName("startButton")
-        self.start_button.clicked.connect(self.toggle_tracking)
-        controls.addWidget(camera_label)
-        controls.addWidget(self.camera_combo)
-        controls.addStretch(1)
-        controls.addWidget(self.start_button)
-        layout.addLayout(controls)
+        refresh = QPushButton("  Refresh")
+        refresh.setIcon(ui_theme.icon("refresh", ui_theme.colors()["text"], 16))
+        refresh.icon_name = "refresh"            # type: ignore[attr-defined]
+        refresh.clicked.connect(self.refresh_cameras)
+        row.addWidget(self.camera_combo)
+        row.addWidget(refresh)
+        row.addStretch(1)
+        body.addLayout(row)
 
-        foot = QLabel("Esc stops tracking. Moving your real mouse pauses hand control for a moment.")
-        foot.setObjectName("footnote")
-        foot.setWordWrap(True)
-        layout.addWidget(foot)
-        self.setCentralWidget(central)
+        body = step(2, "Choose the way to steer", "")
+        self.mode_group = QButtonGroup(self)
+        self.mode_radios: dict[str, QRadioButton] = {}
+        descriptions = {
+            "head": "Move the head to steer, wink or blink to click. For limited hand movement. No calibration.",
+            "sign": "Fingerspell letters (ASL) to type into any app. Teach this person's signs first.",
+            "hand": "Point with a finger, pinch to click and drag, two fingers up to scroll. Needs a steady hand.",
+            "eye": "Look where the pointer should go, hold the gaze or blink to click. Needs calibrating. Beta.",
+        }
+        self.mode_tiles: dict[str, QFrame] = {}
+        tiles = QGridLayout()
+        tiles.setSpacing(10)
+        for i, mode in enumerate(("head", "sign", "hand", "eye")):
+            tile = ModeTile()
+            box = QHBoxLayout(tile)
+            box.setContentsMargins(14, 14, 16, 14)
+            box.setSpacing(12)
+            radio = QRadioButton()
+            radio.setAccessibleName(MODE_NAMES[mode])
+            radio.setCursor(Qt.CursorShape.PointingHandCursor)
+            radio.toggled.connect(lambda on, m=mode: on and self._mode_picked(m))
+            pic = QLabel()
+            pic.setPixmap(ui_theme.icon_pixmap(ui_theme.MODE_ICONS[mode], ui_theme.colors()["text"], 32))
+            pic.setProperty("icon_name", ui_theme.MODE_ICONS[mode])
+            pic.setProperty("icon_size", 32)
+            texts = QVBoxLayout()
+            texts.setSpacing(4)
+            name = QLabel(MODE_NAMES[mode] + (" (beta)" if mode == "eye" else ""))
+            name.setObjectName("tileTitle")
+            desc = QLabel(descriptions[mode])
+            desc.setObjectName("rowHint")
+            desc.setWordWrap(True)
+            texts.addWidget(name)
+            texts.addWidget(desc)
+            texts.addStretch(1)
+            box.addWidget(radio, 0, Qt.AlignmentFlag.AlignTop)
+            box.addWidget(pic, 0, Qt.AlignmentFlag.AlignTop)
+            box.addLayout(texts, 1)
+            tile.radio = radio
+            tiles.addWidget(tile, i, 0)
+            self.mode_group.addButton(radio)
+            self.mode_radios[mode] = radio
+            self.mode_tiles[mode] = tile
+        body.addLayout(tiles)
+        self._tiles_layout = tiles
+        self._tile_columns = 1
+
+        body = step(3, "Check it works", "")
+        row = QHBoxLayout()
+        row.setSpacing(14)
+        self.setup_toggle = QPushButton("Start")
+        self.setup_toggle.setObjectName("bigToggle")
+        self.setup_toggle.setProperty("running", False)
+        self.setup_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setup_toggle.clicked.connect(self.toggle_tracking)
+        self.setup_live = QLabel("Not running.")
+        self.setup_live.setObjectName("status")
+        self.setup_live.setWordWrap(True)
+        row.addWidget(self.setup_toggle)
+        row.addWidget(self.setup_live, 1)
+        body.addLayout(row)
+        self.setup_try = QLabel()
+        self.setup_try.setWordWrap(True)
+        body.addWidget(self.setup_try)
+        self.setup_action = QPushButton()
+        self.setup_action.setObjectName("accent")
+        self.setup_action.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setup_action.clicked.connect(self._setup_action_clicked)
+        body.addWidget(self.setup_action, 0, Qt.AlignmentFlag.AlignLeft)
+
+        body = step(4, "Fine-tune and hand over", "Adjust speed, clicking and steadiness for this person. Then "
+                                                   "turn on the lock if you like, and copy a note for the next "
+                                                   "person who helps.")
+        row = QHBoxLayout()
+        self.tune_button = QPushButton()
+        self.tune_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tune_button.clicked.connect(lambda: self.open_page(self.settings.tracking_mode))
+        handover = QPushButton("Caregiver lock and note")
+        handover.setCursor(Qt.CursorShape.PointingHandCursor)
+        handover.clicked.connect(lambda: self.open_page("caregiver"))
+        row.addWidget(self.tune_button)
+        row.addWidget(handover)
+        row.addStretch(1)
+        body.addLayout(row)
+        l.addStretch(1)
+        scroll.setWidget(page)
+        self._update_setup()
+        return scroll
+
+    # -- pages, lock -----------------------------------------------------------
+    def open_page(self, key: str) -> None:
+        if key not in self.nav or not self.nav[key].isVisible() and self.nav[key].parent() is not None \
+                and self._locked_out():
+            key = "home"
+        self.nav[key].setChecked(True)
+        for i in range(self.stack.count()):
+            if self.stack.widget(i).property("page_key") == key:
+                self.stack.setCurrentIndex(i)
+        if key == "caregiver" and self.settings_panel is not None:
+            self.settings_panel.update_caregiver()
+
+    def current_page(self) -> str:
+        return str(self.stack.currentWidget().property("page_key"))
+
+    def _locked_out(self) -> bool:
+        return self.settings.caregiver_lock and not self._unlocked
+
+    def _apply_lock(self) -> None:
+        locked_out = self._locked_out()
+        for key, button in self.nav.items():
+            button.setVisible(key == "home" or not locked_out)
+        self.settings_label.setVisible(not locked_out)
+        self.unlock_button.setVisible(locked_out)
+        self.relock_button.setVisible(self.settings.caregiver_lock and self._unlocked)
+        if locked_out and self.current_page() != "home":
+            self.open_page("home")
+
+    def set_caregiver_lock(self, on: bool) -> None:
+        if on:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setWindowTitle("Turn on the caregiver lock?")
+            box.setText("Only Home will show. To open setup again, press and hold Caregiver at the bottom of "
+                        "the sidebar for 3 seconds" + (", then type the PIN." if self.settings.caregiver_pin else "."))
+            lock = box.addButton("Turn on the lock", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            if box.clickedButton() is not lock:
+                self.settings_panel.update_caregiver()
+                return
+        self.change_settings(caregiver_lock=on)
+        self._unlocked = False if on else self._unlocked
+        self._apply_lock()
+        if on:
+            self.open_page("home")
+
+    def _unlock_held(self) -> None:
+        if self.settings.caregiver_pin:
+            pin = PinDialog.ask(self)
+            if pin is None:
+                return
+            if not app_settings.pin_matches(self.settings.caregiver_pin, pin):
+                QMessageBox.warning(self, "Wrong PIN", "That PIN isn't right. Setup stays locked.")
+                return
+        self._unlocked = True
+        self._apply_lock()
+        self.open_page("setup")
+
+    def _relock(self) -> None:
+        self._unlocked = False
+        self._apply_lock()
+
+    def flash_footnote(self, text: str) -> None:
+        self.footnote.setText(text)
+        QTimer.singleShot(3000, lambda: self.footnote.setText(self._footnote_text))
+
+    def setup_summary(self) -> str:
+        """A plain note on how this person uses Finger Mouse, for the next person who helps."""
+        s = self.settings
+        mode = MODE_NAMES[s.tracking_mode]
+        lines = [f"Finger Mouse: {mode}"]
+        if s.tracking_mode == "head":
+            lines.append("Steer: move the head (" + ("like a mouse" if s.head_pointer_mode == "relative"
+                                                       else "point at the spot") + ").")
+            lines.append("Click: " + ("wink (left eye left-click, right eye right-click)." if s.head_click == "wink"
+                                      else "a long blink."))
+            mouth = {"drag": "drag", "scroll": "scroll (nod up or down)", "click": "click", "off": ""}[s.head_mouth_action]
+            if mouth:
+                lines.append(f"Open the mouth: {mouth}.")
+            smile = {"pause": "pause or resume", "double_click": "double-click", "right_click": "right-click",
+                     "off": ""}[s.head_smile_action]
+            if smile:
+                lines.append(f"Held smile: {smile}.")
+            if s.snap_enabled:
+                lines.append("Snap is on: the pointer locks still once it settles.")
+        elif s.tracking_mode == "sign":
+            lines.append("Hold each letter steady for a moment to type it. Relax the hand between double letters.")
+        elif s.tracking_mode == "eye":
+            lines.append("Click: " + {"dwell": "hold the gaze still.", "blink": "a deliberate blink.",
+                                      "both": "hold the gaze still or blink."}[s.eye_click_mode])
+            lines.append("If the pointer drifts: Settings, Eye gaze, Re-centre.")
+        else:
+            lines.append("Point with the index finger. Pinch to click, pinch and hold to drag, two fingers up to scroll.")
+        camera = next((c.display_name for c in self.cameras if c.id == s.camera), None)
+        lines.append("Camera: " + (camera or {"auto": "Automatic", "url": "phone or network stream"}.get(s.camera, s.camera)) + ".")
+        lines.append("Start and stop: the big button on Home. Esc always stops it.")
+        if s.caregiver_lock:
+            lines.append("Setup is locked: hold Caregiver at the bottom of the sidebar for 3 seconds"
+                         + (" and type the PIN." if s.caregiver_pin else "."))
+        return "\n".join(lines)
+
+    def _mode_picked(self, mode: str) -> None:
+        if mode != self.settings.tracking_mode:
+            self.change_settings(tracking_mode=mode)
+
+    def _setup_action_clicked(self) -> None:
+        mode = self.settings.tracking_mode
+        if mode == "head":
+            self.recentre_head()
+        elif mode == "eye":
+            self.open_calibration()
+        elif mode == "sign":
+            self.open_teach_signs()
+
+    def _update_setup(self) -> None:
+        """Keep the Set up page's steps in line with what's actually happening."""
+        if not hasattr(self, "steps"):
+            return
+        s = self.settings
+        mode = s.tracking_mode
+        radio = self.mode_radios[mode]
+        if not radio.isChecked():
+            radio.blockSignals(True)
+            radio.setChecked(True)
+            radio.blockSignals(False)
+        for m, tile in self.mode_tiles.items():
+            if tile.property("checked") != (m == mode):
+                tile.setProperty("checked", m == mode)
+                tile.style().unpolish(tile)
+                tile.style().polish(tile)
+        tracking = self.is_tracking()
+        seen = bool(tracking and self.engine and self.engine.view.tracked)
+        n_cams = len(self.cameras)
+        receiving = self.capabilities is not None
+        self._step_state(1, receiving or n_cams > 0 or s.camera == "url",
+                         "Receiving" if receiving else (f"{n_cams} found" if n_cams else
+                                                        ("Phone stream" if s.camera == "url" else "None found yet")))
+        self._step_state(2, True, MODE_NAMES[mode])
+        ready = seen and (mode != "eye" or bool(s.eye_calibration))
+        self._step_state(3, ready, "Working" if ready else ("Running" if tracking else "Not checked yet"))
+        self._step_state(4, False, "")
+        what = {"head": "Ask them to move their head: the pointer should follow. Then a wink: it should click. "
+                        "If the pointer is off to one side, press Re-centre.",
+                "sign": "Press Teach signs and go through the letters together, about a minute. Then open any app "
+                        "and sign a letter.",
+                "hand": "Ask them to point: the pointer should follow the fingertip. A quick pinch should click.",
+                "eye": "Press Calibrate and have them look at each dot as it appears. Then look around: the "
+                       "pointer should follow."}[mode]
+        self.setup_try.setText(what)
+        action = {"head": "Re-centre", "eye": "Calibrate…", "sign": "Teach signs…"}.get(mode)
+        self.setup_action.setVisible(action is not None)
+        if action:
+            self.setup_action.setText(action)
+            self.setup_action.setEnabled(tracking)
+            self.setup_action.setToolTip("" if tracking else "Press Start first.")
+        self.tune_button.setText(f"{MODE_NAMES[mode]} settings")
+
+    def _step_state(self, n: int, done: bool, text: str) -> None:
+        number, state = self.steps[n]
+        if state.text() != text:
+            state.setText(text)
+        for w in (number, state):
+            if w.property("done") != done:
+                w.setProperty("done", done)
+                w.style().unpolish(w)
+                w.style().polish(w)
+        if done:   # a drawn check mark in the number's place, and the words beside it
+            number.setPixmap(ui_theme.icon_pixmap("check", ui_theme.colors()["on_accent"], 16, 3))
+            number.setAccessibleName(f"Step {n} done")
+        else:
+            number.setText(str(n))
+            number.setAccessibleName(f"Step {n}")
+
+    def resizeEvent(self, event: Any) -> None:  # noqa: N802 (Qt name)
+        super().resizeEvent(event)
+        self._flow_tiles()
+
+    def _flow_tiles(self) -> None:
+        """Two columns of steering tiles when there's room, one when the window is narrow."""
+        if not hasattr(self, "_tiles_layout"):
+            return
+        columns = 2 if self.stack.width() >= 860 else 1
+        if columns == self._tile_columns:
+            return
+        self._tile_columns = columns
+        for i, mode in enumerate(("head", "sign", "hand", "eye")):
+            tile = self.mode_tiles[mode]
+            self._tiles_layout.removeWidget(tile)
+            self._tiles_layout.addWidget(tile, i // columns, i % columns)
+        for c in range(2):
+            self._tiles_layout.setColumnStretch(c, 1 if c < columns else 0)
+
+    def _update_preview_empty(self) -> None:
+        if not hasattr(self, "preview_empty"):
+            return
+        c = ui_theme.colors()
+        no_camera = not self.cameras and self.settings.camera != "url"
+        self.preview_icon.setPixmap(ui_theme.icon_pixmap("camera_off" if no_camera else "camera",
+                                                         c["preview_text"], 48, 1.6))
+        self.preview_text.setText("No camera found. Plug one in, or allow camera access, then look again."
+                                  if no_camera else "The camera picture shows here while Finger Mouse is running.")
+        self.preview_fix.setVisible(no_camera)
 
     def _update_subtitle(self) -> None:
-        if self.settings.tracking_mode == "eye":
-            self.subtitle.setText("Look at the screen to move the pointer. Hold your gaze still (or blink) "
-                                  "to click, calibrate first in Settings → Eye tracking.")
-        elif self.settings.tracking_mode == "sign":
-            self.subtitle.setText("Fingerspell to type into any app: hold each letter steady for a moment. "
-                                  "Teach your signs first in Settings → Sign language.")
-        elif self.settings.tracking_mode == "head":
-            mouth = {"drag": " Open your mouth to drag.", "scroll": " Open your mouth and nod to scroll.",
-                     "click": " Open your mouth to click.", "off": ""}[self.settings.head_mouth_action]
+        s = self.settings
+        if s.tracking_mode == "eye":
+            text = "Look where the pointer should go. Hold the gaze still (or blink) to click."
+            if not s.eye_calibration:
+                text += " Calibrate first: Set up, step 3."
+        elif s.tracking_mode == "sign":
+            text = "Fingerspell to type into any app: hold each letter steady for a moment."
+        elif s.tracking_mode == "head":
+            mouth = {"drag": " Open the mouth to drag.", "scroll": " Open the mouth and nod to scroll.",
+                     "click": " Open the mouth to click.", "off": ""}[s.head_mouth_action]
             click = ("Wink to click: left eye left-click, right eye right-click."
-                     if self.settings.head_click == "wink" else "Hold a long blink to click.")
-            self.subtitle.setText(f"Move your head to steer the pointer with your nose. {click}{mouth}")
+                     if s.head_click == "wink" else "Hold a long blink to click.")
+            text = f"Move the head to steer. {click}{mouth}"
         else:
-            self.subtitle.setText("Point with your index finger. Pinch to click, pinch and hold to drag, "
-                                  "two fingers up to scroll.")
+            text = "Point with the index finger. Pinch to click, pinch and hold to drag, two fingers up to scroll."
+        self.subtitle.setText(text)
 
     def _apply_style(self) -> None:
-        check = (ASSETS / "check.png").as_posix()
-        self.setStyleSheet(f"""
-            QWidget {{ background: #0c1220; color: #e8edf6; font-size: 14px; }}
-            QLabel#title {{ font-size: 28px; font-weight: 700; color: #f4f7fb; }}
-            QLabel#subtitle, QLabel#hint {{ color: #aebbd0; }}
-            QLabel#hint {{ font-size: 12px; }}
-            QLabel#preview {{ background: #080d17; border: 1px solid #263248; border-radius: 12px; color: #8290a6; }}
-            QLabel#value {{ color: #67e8f9; font-weight: 700; }}
-            QLabel#status {{ color: #d4dbe7; }}
-            QLabel#chip {{ border-radius: 10px; padding: 3px 10px; font-weight: 700; background: #1e293b; }}
-            QLabel#diag {{ color: #8fb3c9; font-family: Consolas, Menlo, monospace; font-size: 12px; }}
-            QLabel#error {{ color: #fca5a5; }}
-            QLabel#footnote {{ color: #8290a6; font-size: 12px; }}
-            QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {{ background: #182338; border: 1px solid #35445c;
-                border-radius: 7px; padding: 6px 9px; min-height: 22px; }}
-            QComboBox QAbstractItemView {{ background: #182338; selection-background-color: #155e75; }}
-            QSlider {{ min-height: 26px; }}
-            QSlider::groove:horizontal {{ height: 5px; background: #344259; border-radius: 2px; }}
-            QSlider::sub-page:horizontal {{ background: #22d3ee; border-radius: 2px; }}
-            QSlider::handle:horizontal {{ background: #ecfeff; border: 2px solid #22d3ee; width: 16px;
-                margin: -7px 0; border-radius: 9px; }}
-            QSlider:focus {{ background: #1b2a44; border-radius: 6px; }}
-            QSlider:focus::handle:horizontal {{ background: #fbbf24; }}
-            QPushButton {{ background: #26344b; color: #e8edf6; border: 2px solid transparent; border-radius: 8px;
-                padding: 9px 15px; font-weight: 700; min-height: 22px; }}
-            QPushButton:hover {{ background: #31425f; }}
-            QPushButton:focus, QComboBox:focus, QLineEdit:focus, QCheckBox:focus {{ border: 2px solid #fbbf24; }}
-            QPushButton#startButton {{ background: #0891b2; color: white; min-width: 150px; }}
-            QPushButton#startButton:hover {{ background: #06a3c7; }}
-            QPushButton:disabled {{ color: #6b7a90; }}
-            QCheckBox {{ spacing: 9px; min-height: 26px; }}
-            QCheckBox::indicator {{ width: 18px; height: 18px; border: 2px solid #5b6b85; border-radius: 5px;
-                background: #182338; }}
-            QCheckBox::indicator:checked {{ background: #0891b2; border-color: #22d3ee; image: url("{check}"); }}
-            QCheckBox::indicator:hover {{ border-color: #22d3ee; }}
-            QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
-            QScrollBar::handle:vertical {{ background: #35445c; border-radius: 4px; min-height: 30px; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
-            QTabWidget::pane {{ border: 1px solid #27344a; border-radius: 10px; background: #111a2b; }}
-            QWidget#page, QScrollArea#pageScroll, QScrollArea#pageScroll > QWidget > QWidget {{ background: #111a2b; }}
-            QWidget#page QLabel, QWidget#page QCheckBox, QWidget#page QSlider {{ background: transparent; }}
-            QTabBar::tab {{ background: #182338; padding: 8px 14px; margin-right: 3px; border-top-left-radius: 7px;
-                border-top-right-radius: 7px; color: #aebbd0; }}
-            QTabBar::tab:selected {{ background: #111a2b; color: #f4f7fb; font-weight: 700; }}
-            QTabBar::tab:focus {{ color: #fbbf24; }}
-        """)
+        sheet = ui_theme.stylesheet()
+        self.setStyleSheet(sheet)
+        c = ui_theme.colors()
+        for b in self.findChildren(QPushButton):
+            name = getattr(b, "icon_name", "")
+            if name:
+                b.setIcon(ui_theme.icon(name, c["on_accent"] if b.objectName() == "accent" else c["text"], 16))
+        for pic in self.findChildren(QLabel):
+            name = pic.property("icon_name")
+            if name:
+                pic.setPixmap(ui_theme.icon_pixmap(str(name), c["text"], int(pic.property("icon_size") or 22)))
+        self._style_toggles()
+        self._update_preview_empty()
+        self._set_status(*self._state, force=True)
+        for w in self.findChildren(QWidget):
+            if isinstance(w, (ui_theme.NavButton, ui_theme.ToggleSwitch, ui_theme.HoldButton, ui_theme.StateDisc)):
+                w.update()
+
+    def _style_toggles(self) -> None:
+        running = self.is_tracking()
+        c = ui_theme.colors()
+        for b in (self.start_button, self.setup_toggle):
+            b.setText("  Stop" if running else "  Start")
+            b.setIcon(ui_theme.icon("stop" if running else "play", c["text"] if running else c["on_accent"], 18))
+            if b.property("running") != running:
+                b.setProperty("running", running)
+                b.style().unpolish(b)
+                b.style().polish(b)
+        self.start_button.setToolTip("Stop (Esc)" if running else "Start controlling the pointer")
 
     def _build_tray(self) -> None:
         self.tray: Optional[QSystemTrayIcon] = None
@@ -1498,7 +2131,7 @@ class MainWindow(QMainWindow):
         tray.setToolTip(APP_NAME)
         menu = QMenu()
         show = QAction("Show Finger Mouse", self, triggered=self.show_window)
-        self.tray_toggle = QAction("Start tracking", self, triggered=self.toggle_tracking)
+        self.tray_toggle = QAction("Start", self, triggered=self.toggle_tracking)
         quit_action = QAction("Quit", self, triggered=self.quit)
         menu.addAction(show)
         menu.addAction(self.tray_toggle)
@@ -1523,15 +2156,26 @@ class MainWindow(QMainWindow):
         self.diag.setVisible(new.show_diagnostics)
         if new.verbose_logging != old.verbose_logging:
             logging.getLogger().setLevel(logging.DEBUG if new.verbose_logging else logging.INFO)
-        if any(getattr(new, k) != getattr(old, k) for k in ("tracking_mode", "head_click", "head_mouth_action")):
+        if any(getattr(new, k) != getattr(old, k)
+               for k in ("tracking_mode", "head_click", "head_mouth_action", "eye_calibration")):
             self._update_subtitle()
         if new.tracking_mode != old.tracking_mode:
-            if self.settings_dialog is not None:
-                self.settings_dialog.update_calibration_status()
-                self.settings_dialog.update_sign_status()
-            self.settings_dialog.update_sign_status()
+            if self.settings_panel is not None:
+                self.settings_panel.update_calibration_status()
+                self.settings_panel.update_sign_status()
+                self.settings_panel.update_modes()
+            for key, button in self.nav.items():
+                button.set_badge("In use" if key == new.tracking_mode else "")
+            self._set_status(*self._state, force=True)
+        if new.caregiver_lock != old.caregiver_lock:
+            self._apply_lock()
+        if self.settings_panel is not None and self.current_page() == "caregiver":
+            self.settings_panel.update_caregiver()
+        self._update_setup()
         if new.camera != old.camera:
             self._select_quick_camera()
+            if self.settings_panel is not None:
+                self.settings_panel.update_camera_info()
         if self.engine is not None:
             self.engine.update_settings(new)
             if new.camera != old.camera or new.camera_resolution != old.camera_resolution:
@@ -1539,22 +2183,19 @@ class MainWindow(QMainWindow):
         if self.output is not None:
             self.output.pause_on_physical_mouse = new.pause_on_physical_mouse
 
-    def open_settings(self) -> None:
-        if self.settings_dialog is None:
-            self.settings_dialog = SettingsDialog(self)
-        else:
-            self.settings_dialog.load(self.settings)
-        self.settings_dialog.show()
-        self.settings_dialog.raise_()
-        self.settings_dialog.activateWindow()
+    def open_settings(self, page: Optional[str] = None) -> None:
+        """Show a settings page; by default the one for the way of steering in use."""
+        self.settings_panel.load(self.settings)
+        self.show_window()
+        self.open_page(page or self.settings.tracking_mode)
 
     def open_calibration(self) -> None:
         if not self._eye_ready():
             return
         dialog = CalibrationDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            if self.settings_dialog is not None:
-                self.settings_dialog.load(self.settings)
+            if self.settings_panel is not None:
+                self.settings_panel.load(self.settings)
             err = dialog.accuracy
             if err is None:
                 note = "Look around to try it."
@@ -1566,23 +2207,22 @@ class MainWindow(QMainWindow):
                 where = "on check points it didn't train on" if dialog.accuracy_is_held_out else "on the calibration points"
                 note = f"Average error {where}: about {err * 100:.1f}% of the screen (~{px} px). {quality}."
             QMessageBox.information(self, "Calibrated", f"Eye tracking is calibrated. {note}" + chr(10) * 2 +
-                                    "If it drifts later (you moved, the laptop moved), use Re-centre in "
-                                    "Settings → Eye tracking: one second, no recalibrating.")
+                                    "If it drifts later (someone moved, the laptop moved), use Re-centre on "
+                                    "the Eye gaze page: one second, no recalibrating.")
 
     def open_teach_signs(self) -> None:
         if self.engine is None or self.output is None or self.settings.tracking_mode != "sign":
-            QMessageBox.information(self, "Start sign mode first",
-                "Pick Sign language typing under Pointer → Tracking mode and press Start tracking, then "
-                "teach your signs.")
+            QMessageBox.information(self, "Start sign language typing first",
+                "In Set up, choose Sign language typing and press Start, then teach the signs.")
             return
         TeachSignsDialog(self).exec()
-        if self.settings_dialog is not None:
-            self.settings_dialog.update_sign_status()
+        if self.settings_panel is not None:
+            self.settings_panel.update_sign_status()
 
     def recentre_head(self) -> None:
         if self.engine is None or self.settings.tracking_mode != "head":
             QMessageBox.information(self, "Start the head pointer first",
-                "Pick Head pointer under Pointer → Tracking mode and press Start tracking, then re-centre.")
+                "In Set up, choose Head pointer and press Start, then re-centre.")
             return
         self.engine.recentre_head()
 
@@ -1592,14 +2232,13 @@ class MainWindow(QMainWindow):
         if not GazeCalibration.from_json(self.settings.eye_calibration).is_calibrated:
             QMessageBox.information(self, "Calibrate first", "Re-centring adjusts a calibration, calibrate first.")
             return
-        if CalibrationDialog(self, recentre=True).exec() == QDialog.DialogCode.Accepted and self.settings_dialog:
-            self.settings_dialog.load(self.settings)
+        if CalibrationDialog(self, recentre=True).exec() == QDialog.DialogCode.Accepted and self.settings_panel:
+            self.settings_panel.load(self.settings)
 
     def _eye_ready(self) -> bool:
         if self.engine is None or self.output is None or self.settings.tracking_mode != "eye":
             QMessageBox.information(self, "Start eye tracking first",
-                "Switch to Eye gaze mode in Settings and press Start tracking, then come back here to "
-                "calibrate.")
+                "In Set up, choose Eye gaze and press Start, then calibrate.")
             return False
         return True
 
@@ -1621,8 +2260,10 @@ class MainWindow(QMainWindow):
             cams = []
         self.cameras = cams
         self._select_quick_camera()
-        if self.settings_dialog is not None:
-            self.settings_dialog.populate_cameras()
+        if self.settings_panel is not None:
+            self.settings_panel.populate_cameras()
+        self._update_setup()
+        self._update_preview_empty()
 
     def _select_quick_camera(self) -> None:
         combo = self.camera_combo
@@ -1644,8 +2285,8 @@ class MainWindow(QMainWindow):
         value = self.camera_combo.currentData()
         if value and value != self.settings.camera:
             self.change_settings(camera=value)
-            if self.settings_dialog is not None:
-                self.settings_dialog.populate_cameras()
+            if self.settings_panel is not None:
+                self.settings_panel.populate_cameras()
 
     def camera_command(self, command: str, value: Any = None) -> None:
         if self.engine is not None:
@@ -1695,13 +2336,16 @@ class MainWindow(QMainWindow):
         self.watchdog.watch(Heartbeat("inference", lambda: engine.infer_started, 1.0, "hand tracking inference"))
         self.watchdog.watch(Heartbeat("output", lambda: output.busy_since, 0.5, "pointer output call"))
         self.engine.start()
-        self.start_button.setText("Stop tracking")
+        self._style_toggles()
         if self.tray:
-            self.tray_toggle.setText("Stop tracking")
-        if self.settings_dialog is not None:
-            self.settings_dialog.update_calibration_status()
-            self.settings_dialog.update_sign_status()
+            self.tray_toggle.setText("Stop")
+        if self.settings_panel is not None:
+            self.settings_panel.update_calibration_status()
+            self.settings_panel.update_sign_status()
+            self.settings_panel.update_camera_info()
+        self.preview_stack.setCurrentWidget(self.preview)
         self._set_status("starting", "Starting the camera…")
+        self._update_setup()
         if sys.platform.startswith("linux") and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
             self._set_status("starting", "Wayland desktops usually block apps from moving the pointer. If nothing "
                                          "moves, log in with an X11 session (e.g. “Ubuntu on Xorg”).")
@@ -1722,16 +2366,19 @@ class MainWindow(QMainWindow):
         self.output = None
         self.capabilities = None
         self.overlay.hide()
-        self.start_button.setText("Start tracking")
+        self._style_toggles()
         if self.tray:
-            self.tray_toggle.setText("Start tracking")
-        self._set_status("stopped", self._fatal or "Stopped. Start tracking to control the pointer again.")
+            self.tray_toggle.setText("Start")
+        self._set_status("error" if self._fatal else "stopped",
+                         self._fatal or "Press Start to control the pointer again.")
         self.preview.setPixmap(QPixmap())
-        self.preview.setText("The camera picture appears here once tracking starts.")
-        if self.settings_dialog is not None:
-            self.settings_dialog.update_camera_info()
-            self.settings_dialog.update_calibration_status()
-            self.settings_dialog.update_sign_status()
+        self.preview_stack.setCurrentWidget(self.preview_empty)
+        self._update_preview_empty()
+        self._update_setup()
+        if self.settings_panel is not None:
+            self.settings_panel.update_camera_info()
+            self.settings_panel.update_calibration_status()
+            self.settings_panel.update_sign_status()
         if self._quitting:
             QApplication.quit()
 
@@ -1788,8 +2435,9 @@ class MainWindow(QMainWindow):
         if view.camera_state == "connected" and isinstance(view.camera_detail, CameraCapabilities):
             if self.capabilities is not view.camera_detail:
                 self.capabilities = view.camera_detail
-                if self.settings_dialog is not None:
-                    self.settings_dialog.update_camera_info()
+                if self.settings_panel is not None:
+                    self.settings_panel.update_camera_info()
+                self._update_setup()
         if self._notice and now < self._notice[2]:
             self._set_status(self._notice[0], self._notice[1])
         else:
@@ -1832,18 +2480,41 @@ class MainWindow(QMainWindow):
         self._notice = (chip, text, time.monotonic() + seconds)
         self._set_status(chip, text)
 
-    def _set_status(self, gesture: str, text: str) -> None:
+    def _set_status(self, gesture: str, text: str, force: bool = False) -> None:
+        """Show the state on Home (disc, headline, chip, detail) and on Set up.
+        Each state has its own words and icon; colour only backs them up."""
+        if (gesture, text) == self._state and not force:
+            return
+        changed = gesture != self._state[0] or force
+        self._state = (gesture, text)
         names = {"ready": "Ready", "pinched": "Pinch", "dragging": "Dragging", "scrolling": "Scrolling",
                  "paused": "Paused", "hide": "Hide", "no_hand": "No hand", "open": "Tracking",
-                 "pointing": "Tracking", "starting": "Starting", "stopped": "Stopped",
+                 "pointing": "Tracking", "starting": "Starting", "stopped": "Stopped", "error": "Stopped",
                  "gazing": "Tracking", "dwelling": "Click", "no_face": "No face", "uncalibrated": "Not calibrated"}
-        chip = names.get(gesture, "Tracking")
-        if self.chip.text() != chip:
-            self.chip.setText(chip)
-            color = GESTURE_COLORS.get(gesture, "#8290a6")
-            self.chip.setStyleSheet(f"color: {color}; border: 1px solid {color};")
+        mode = self.settings.tracking_mode
+        what = ui_theme.tone(gesture)
+        headline, icon_name = {
+            "stopped": ("Not running", "power"),
+            "error": ("Stopped by a problem", "alert"),
+            "starting": ("Starting…", "loader"),
+            "no_hand": ("Can't see a hand", "scan"),
+            "no_face": ("Can't see a face", "scan"),
+            "paused": ("Paused", "pause"),
+            "hide": ("Hiding…", "pause"),
+            "uncalibrated": ("Eye gaze needs calibrating", "alert"),
+        }.get(gesture, (f"{MODE_NAMES[mode]} is on", ui_theme.MODE_ICONS[mode]))
         if self.status.text() != text:
             self.status.setText(text)
+        if self.setup_live.text() != (text or headline):
+            self.setup_live.setText(text or headline)
+        if not changed:
+            return
+        c = ui_theme.colors()
+        self.headline.setText(headline)
+        self.state_disc.set_state(what, icon_name)
+        self.chip.setText(names.get(gesture, "Tracking"))
+        self.chip.setStyleSheet(f"background: {c[what + '_bg']}; color: {c[what]};")
+        self._update_setup()
 
     # -- hide gesture, tray, quit -------------------------------------------------
     def _hide_from_gesture(self, action: str) -> None:
@@ -2028,6 +2699,7 @@ def main() -> int:
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(PUBLISHER)
     app.setWindowIcon(app_icon())
+    ui_theme.apply_app_font(app)
     app.setQuitOnLastWindowClosed(False)   # hiding to the tray must not quit
     window = MainWindow(log_dir)
     window.show()

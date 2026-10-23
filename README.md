@@ -32,7 +32,7 @@ Once installed, Finger Mouse runs entirely offline.
 | Pinch and hold (0.42 s by default), move, open | press, drag, drop |
 | Index and middle fingers up, move up or down | scroll, further from where you started is faster |
 | Move your real mouse | pause hand control for a moment |
-| Esc, or **Stop tracking** | stop |
+| Esc, or **Stop** | stop |
 
 **Clicks land where you meant.** As your fingers close, pointer smoothing
 tightens so the pinch itself barely moves the pointer. The click point is
@@ -54,7 +54,7 @@ dead zone, a speed cap and a gentle start.
 ### Head pointer
 
 A third way to steer, for anyone who can move their head more easily than a
-hand: **Settings → Pointer → Tracking mode → Head pointer**. No calibration.
+hand: **Set up → Head pointer**. No calibration.
 
 - **Your nose steers.** It's the steadiest point on a face, talking or
   smiling doesn't move it, and it's measured in face widths, so sitting
@@ -76,10 +76,10 @@ hand: **Settings → Pointer → Tracking mode → Head pointer**. No calibratio
 
 ### Typing with sign language
 
-**Settings → Pointer → Tracking mode → Sign language typing** types
+**Set up → Sign language typing** types
 fingerspelling (the ASL manual alphabet) into whatever app has the keyboard.
 
-1. Press Start tracking, then **Settings → Sign language → Teach signs**:
+1. Press Start, then **Teach signs** (Set up, step 3, or the Sign language page):
    each letter is shown with how it's made; hold it for two seconds, moving
    your hand a little. Then a space sign and a delete sign of your choice.
    About a minute for everything. Your signs are saved and kept separately
@@ -95,15 +95,14 @@ carefully, and raise **Certainty** if they get mixed up.
 
 ### Eye tracking
 
-An alternative to hand gestures: Settings → Pointer → Tracking mode → **Eye
+An alternative to hand gestures: **Set up → Eye
 gaze**. It follows where your iris sits within your own eye socket, which
 moves with your eyeball and barely with your head, turning your head
 without moving your eyes hardly changes it, which is what lets a short
 calibration turn it into an accurate screen position.
 
-1. Switch to eye gaze mode, start tracking, then open Settings → Eye
-   tracking → **Calibrate…** and look at each of the nine dots as it
-   appears.
+1. Choose eye gaze in Set up, press Start, then **Calibrate…** (Set up,
+   step 3, or the Eye gaze page) and look at each dot as it appears.
 2. **Click by holding your gaze still** (the default), by a **deliberate
    blink**, or either, an ordinary quick blink doesn't count, only one held
    past a threshold. Dwelling tolerates a little drift rather than demanding
@@ -115,27 +114,30 @@ would. There's no drag gesture in eye mode yet, only clicking.
 
 ### Settings
 
-Everything is under **Settings**, applies immediately, and is saved to your
-user folder (`%APPDATA%\Finger Mouse`, `~/Library/Application Support/Finger
+The window works like the system's own Settings app, in light or dark to
+match the system. A sidebar holds **Home** (a big status and one Start/Stop
+button, for the person using it), **Set up** (four steps for whoever sets it
+up: camera, way to steer, check it works, fine-tune), and a page for each
+group of settings. Everything applies immediately and is saved to your user
+folder (`%APPDATA%\Finger Mouse`, `~/Library/Application Support/Finger
 Mouse`, or `~/.config/Finger Mouse`):
 
-- **Pointer:** tracking mode (hand or eye), smoothing, hand reach (how much
-  of the camera view spans the screen), main screen or all screens, halo
-  size, pause while using the real mouse, and a shortcut to the system's own
-  pointer-size setting.
-- **Click & drag:** turn clicking or dragging on and off, pinch threshold,
-  release gap, how many frames must agree, hold time before a drag.
-- **Scrolling:** on/off, pose (two fingers, or index only), speed, dead zone,
-  direction.
-- **Eye tracking:** click by dwell, blink or either, dwell time and
-  steadiness, blink hold time, smoothing, and the Calibrate button.
+- **Head pointer, Sign language, Hand gestures, Eye gaze:** the settings for
+  each way of steering, with a button to switch to it.
+- **Hand gestures** also has the optional **hide gesture** (off by default):
+  hold up only your middle finger to stop tracking and hide Finger Mouse to
+  the tray, minimise it, or quit it. It asks for confirmation before it can
+  be turned on, and it never touches other apps.
+- **Pointer:** main screen or all screens, the halo, pausing while the real
+  mouse moves, and a shortcut to the system's own pointer-size setting.
 - **Camera:** see below.
-- **Hide gesture** (off by default): hold up only your middle finger to stop
-  tracking and hide Finger Mouse to the tray, minimise it, or quit it. It
-  asks for confirmation before it can be turned on, and it never touches
-  other apps.
-- **Advanced:** hand landmarks and gesture state in the preview, a
-  diagnostics line, detailed logging, and the log folder.
+- **Caregiver:** an optional **lock** (only Home shows; press and hold
+  *Caregiver* at the bottom of the sidebar for 3 seconds, plus an optional
+  PIN, to open setup again) and a **handover note** describing how this
+  person uses Finger Mouse, ready to copy into a care plan or an email.
+- **Advanced:** tracking points and gesture name in the preview, a
+  diagnostics line, detailed logging, the log folder, update notices, and
+  Restore defaults.
 
 ### Cameras
 
@@ -170,7 +172,7 @@ virtual ones often come first in the list and show a blank picture.
 
 ## If something goes wrong
 
-Turn on **Settings → Advanced → Show diagnostics**. The line under the
+Turn on **Advanced → Show diagnostics**. The line under the
 preview shows camera frame rate, how old the latest frame is, hand-tracking
 time, tracking frame rate, the window's own frame rate, and the pointer
 queue. If any part stalls, it names which one ("camera read blocked
