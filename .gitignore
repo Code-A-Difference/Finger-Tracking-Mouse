@@ -8,3 +8,8 @@ __pycache__/
 # Downloaded by tools/fetch_model.py (pinned by SHA-256), never committed
 models/*.task
 models/*.part
+
+# Impeccable working files (screenshots, decision sketches, page state)
+.impeccable/review/
+.impeccable/mocks/
+.impeccable/questions/

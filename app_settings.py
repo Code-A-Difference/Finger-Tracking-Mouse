@@ -112,6 +112,10 @@ class Settings:
     hide_gesture_action: str = "tray"
     hide_gesture_hold_ms: int = 1200
 
+    # ---- caregiver lock ---------------------------------------------------
+    caregiver_lock: bool = False     # only Home shows; setup opens with a 3-second hold or the PIN
+    caregiver_pin: str = ""          # "salt$sha256(salt+pin)", "" = no PIN (hold to open)
+
     # ---- debugging ----------------------------------------------------
     show_landmarks: bool = True
     show_gesture_state: bool = True
@@ -209,6 +213,9 @@ def validate(data: dict[str, Any]) -> Settings:
     if not GazeCalibration.from_json(clean["eye_calibration"]).is_calibrated:
         clean["eye_calibration"] = ""
     clean["eye_calibration"] = clean["eye_calibration"][:8000]
+    pin = clean["caregiver_pin"]
+    if pin and not (len(pin) <= 200 and pin.count("$") == 1 and len(pin.split("$")[1]) == 64):
+        clean["caregiver_pin"] = ""
     # The hide gesture only runs once its warning has been accepted.
     if not clean["hide_gesture_confirmed"]:
         clean["hide_gesture_enabled"] = False
@@ -252,6 +259,22 @@ def migrate(data: dict[str, Any]) -> dict[str, Any]:
         out.setdefault("hide_gesture_enabled", True)
         out.setdefault("hide_gesture_confirmed", True)
     return out
+
+
+def hash_pin(pin: str, salt: str | None = None) -> str:
+    """The caregiver PIN as stored: never the digits themselves."""
+    import hashlib
+    import secrets
+    salt = salt or secrets.token_hex(8)
+    return f"{salt}${hashlib.sha256((salt + pin).encode('utf-8')).hexdigest()}"
+
+
+def pin_matches(stored: str, pin: str) -> bool:
+    import hmac
+    if not stored or "$" not in stored:
+        return False
+    salt = stored.split("$", 1)[0]
+    return hmac.compare_digest(hash_pin(pin, salt), stored)
 
 
 def config_dir() -> Path:

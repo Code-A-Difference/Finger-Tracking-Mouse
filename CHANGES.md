@@ -1,5 +1,26 @@
 # What changed
 
+## Unreleased
+
+### A new window, built for caregivers
+- The window now works like the system's own Settings app, in light or dark
+  to match the system: a sidebar with **Home**, **Set up** and a page for
+  each group of settings, instead of one window and nine tabs.
+- **Home** is for the person using Finger Mouse: a big status anyone can
+  read from their seat ("Head pointer is on", "Can't see a face"), what to
+  do to click, and one large Start/Stop button.
+- **Set up** walks whoever is setting it up through four steps: choose the
+  camera, choose the way to steer, check it works, fine-tune. Each step
+  shows when it's done.
+- **Caregiver lock** (optional, off by default): only Home shows, so a stray
+  click can't change the setup. Press and hold *Caregiver* for 3 seconds,
+  plus an optional PIN, to open setup again.
+- **Handover note**: a short description of how this person uses Finger
+  Mouse, ready to copy into a care plan or an email for the next person who
+  helps.
+- Settings are grouped rows with switches that say On or Off, so no state
+  depends on colour alone. Bigger text and targets throughout.
+
 ## 2.8.0
 
 ### Tells you when a new version is out
